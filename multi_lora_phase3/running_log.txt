@@ -1,0 +1,354 @@
+# running_log.txt — multi_lora_phase3
+# Generated: 2026-07-06T08:03:34Z
+# Container image: nvcr.io/nvidia/pytorch:25.04-py3
+# Workdir: /home/multi_lora
+# PYTHONPATH=/home/multi_lora
+# CUDA_VISIBLE_DEVICES=0
+
+================================================================================
+[ENV python]
+================================================================================
+Command:
+  python --version
+Started: 2026-07-06T08:03:34Z
+--------------------------------------------------------------------------------
+Python 3.12.3
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:03:34Z
+
+================================================================================
+[ENV torch cuda]
+================================================================================
+Command:
+  python -c import torch; print(chr(116)+chr(111)+chr(114)+chr(99)+chr(104), torch.__version__); print(chr(99)+chr(117)+chr(100)+chr(97)+chr(95)+chr(97)+chr(118)+chr(97)+chr(105)+chr(108)+chr(97)+chr(98)+chr(108)+chr(101), torch.cuda.is_available()); print(chr(100)+chr(101)+chr(118)+chr(105)+chr(99)+chr(101)+chr(95)+chr(99)+chr(111)+chr(117)+chr(110)+chr(116), torch.cuda.device_count()); print(chr(98)+chr(102)+chr(49)+chr(54)+chr(95)+chr(115)+chr(117)+chr(112)+chr(112)+chr(111)+chr(114)+chr(116)+chr(101)+chr(100), torch.cuda.is_bf16_supported() if torch.cuda.is_available() else None)
+Started: 2026-07-06T08:03:34Z
+--------------------------------------------------------------------------------
+torch 2.7.0a0+79aa17489c.nv25.04
+cuda_available True
+device_count 1
+bf16_supported True
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:03:36Z
+
+================================================================================
+[SETUP requirements]
+================================================================================
+Command:
+  pip install -r multi_lora_phase3/requirements.txt
+Started: 2026-07-06T08:03:37Z
+--------------------------------------------------------------------------------
+DEPRECATION: Loading egg at /usr/local/lib/python3.12/dist-packages/dill-0.3.9-py3.12.egg is deprecated. pip 25.1 will enforce this behaviour change. A possible replacement is to use pip for package installation. Discussion can be found at https://github.com/pypa/pip/issues/12330
+DEPRECATION: Loading egg at /usr/local/lib/python3.12/dist-packages/looseversion-1.3.0-py3.12.egg is deprecated. pip 25.1 will enforce this behaviour change. A possible replacement is to use pip for package installation. Discussion can be found at https://github.com/pypa/pip/issues/12330
+DEPRECATION: Loading egg at /usr/local/lib/python3.12/dist-packages/lightning_utilities-0.14.3-py3.12.egg is deprecated. pip 25.1 will enforce this behaviour change. A possible replacement is to use pip for package installation. Discussion can be found at https://github.com/pypa/pip/issues/12330
+DEPRECATION: Loading egg at /usr/local/lib/python3.12/dist-packages/opt_einsum-3.4.0-py3.12.egg is deprecated. pip 25.1 will enforce this behaviour change. A possible replacement is to use pip for package installation. Discussion can be found at https://github.com/pypa/pip/issues/12330
+DEPRECATION: Loading egg at /usr/local/lib/python3.12/dist-packages/nvfuser-0.2.27a0+5111d3b-py3.12-linux-x86_64.egg is deprecated. pip 25.1 will enforce this behaviour change. A possible replacement is to use pip for package installation. Discussion can be found at https://github.com/pypa/pip/issues/12330
+DEPRECATION: Loading egg at /usr/local/lib/python3.12/dist-packages/lightning_thunder-0.2.2.dev0-py3.12.egg is deprecated. pip 25.1 will enforce this behaviour change. A possible replacement is to use pip for package installation. Discussion can be found at https://github.com/pypa/pip/issues/12330
+Requirement already satisfied: torch>=2.1.0 in /usr/local/lib/python3.12/dist-packages (from -r multi_lora_phase3/requirements.txt (line 1)) (2.7.0a0+79aa17489c.nv25.4)
+Requirement already satisfied: transformers>=4.40.0 in /usr/local/lib/python3.12/dist-packages (from -r multi_lora_phase3/requirements.txt (line 2)) (5.3.0)
+Requirement already satisfied: peft>=0.11.0 in /usr/local/lib/python3.12/dist-packages (from -r multi_lora_phase3/requirements.txt (line 3)) (0.19.1)
+Requirement already satisfied: accelerate>=0.30.0 in /usr/local/lib/python3.12/dist-packages (from -r multi_lora_phase3/requirements.txt (line 4)) (1.14.0)
+Requirement already satisfied: pytest>=7.0.0 in /usr/local/lib/python3.12/dist-packages (from -r multi_lora_phase3/requirements.txt (line 5)) (8.1.1)
+Requirement already satisfied: filelock in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (3.18.0)
+Requirement already satisfied: typing-extensions>=4.10.0 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (4.12.2)
+Requirement already satisfied: setuptools in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (78.1.0)
+Requirement already satisfied: sympy>=1.13.3 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (1.13.3)
+Requirement already satisfied: networkx in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (3.4.2)
+Requirement already satisfied: jinja2 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (3.1.6)
+Requirement already satisfied: fsspec in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (2025.3.0)
+Requirement already satisfied: huggingface-hub<2.0,>=1.3.0 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (1.13.0)
+Requirement already satisfied: numpy>=1.17 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (1.26.4)
+Requirement already satisfied: packaging>=20.0 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (23.2)
+Requirement already satisfied: pyyaml>=5.1 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (6.0.2)
+Requirement already satisfied: regex!=2019.12.17 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (2024.11.6)
+Requirement already satisfied: tokenizers<=0.23.0,>=0.22.0 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (0.22.2)
+Requirement already satisfied: typer in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (0.15.2)
+Requirement already satisfied: safetensors>=0.4.3 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (0.5.3)
+Requirement already satisfied: tqdm>=4.27 in /usr/local/lib/python3.12/dist-packages (from transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (4.67.1)
+Requirement already satisfied: psutil in /usr/local/lib/python3.12/dist-packages (from peft>=0.11.0->-r multi_lora_phase3/requirements.txt (line 3)) (7.0.0)
+Requirement already satisfied: iniconfig in /usr/local/lib/python3.12/dist-packages (from pytest>=7.0.0->-r multi_lora_phase3/requirements.txt (line 5)) (2.1.0)
+Requirement already satisfied: pluggy<2.0,>=1.4 in /usr/local/lib/python3.12/dist-packages (from pytest>=7.0.0->-r multi_lora_phase3/requirements.txt (line 5)) (1.5.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.4.3 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (1.5.0)
+Requirement already satisfied: httpx<1,>=0.23.0 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (0.28.1)
+Requirement already satisfied: mpmath<1.4,>=1.1.0 in /usr/local/lib/python3.12/dist-packages (from sympy>=1.13.3->torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (1.3.0)
+Requirement already satisfied: MarkupSafe>=2.0 in /usr/local/lib/python3.12/dist-packages (from jinja2->torch>=2.1.0->-r multi_lora_phase3/requirements.txt (line 1)) (3.0.2)
+Requirement already satisfied: click>=8.0.0 in /usr/local/lib/python3.12/dist-packages (from typer->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (8.1.8)
+Requirement already satisfied: shellingham>=1.3.0 in /usr/local/lib/python3.12/dist-packages (from typer->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (1.5.4)
+Requirement already satisfied: rich>=10.11.0 in /usr/local/lib/python3.12/dist-packages (from typer->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (13.9.4)
+Requirement already satisfied: anyio in /usr/local/lib/python3.12/dist-packages (from httpx<1,>=0.23.0->huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (4.9.0)
+Requirement already satisfied: certifi in /usr/local/lib/python3.12/dist-packages (from httpx<1,>=0.23.0->huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (2025.1.31)
+Requirement already satisfied: httpcore==1.* in /usr/local/lib/python3.12/dist-packages (from httpx<1,>=0.23.0->huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (1.0.7)
+Requirement already satisfied: idna in /usr/local/lib/python3.12/dist-packages (from httpx<1,>=0.23.0->huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (3.10)
+Requirement already satisfied: h11<0.15,>=0.13 in /usr/local/lib/python3.12/dist-packages (from httpcore==1.*->httpx<1,>=0.23.0->huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (0.14.0)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /usr/local/lib/python3.12/dist-packages (from rich>=10.11.0->typer->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (3.0.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /usr/local/lib/python3.12/dist-packages (from rich>=10.11.0->typer->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (2.19.1)
+Requirement already satisfied: mdurl~=0.1 in /usr/local/lib/python3.12/dist-packages (from markdown-it-py>=2.2.0->rich>=10.11.0->typer->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (0.1.2)
+Requirement already satisfied: sniffio>=1.1 in /usr/local/lib/python3.12/dist-packages (from anyio->httpx<1,>=0.23.0->huggingface-hub<2.0,>=1.3.0->transformers>=4.40.0->-r multi_lora_phase3/requirements.txt (line 2)) (1.3.1)
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:03:38Z
+
+================================================================================
+[UNITTEST pytest phase3]
+================================================================================
+Command:
+  python -m pytest multi_lora_phase3/unittest/ -q
+Started: 2026-07-06T08:03:38Z
+--------------------------------------------------------------------------------
+Running 10 items in this shard
+..........                                                               [100%]
+=============================== warnings summary ===============================
+multi_lora_phase3/unittest/test_batching.py::test_grouped_matches_rowwise
+multi_lora_phase3/unittest/test_manager_phase3.py::test_manager_forward_matches_rowwise
+  /usr/local/lib/python3.12/dist-packages/transformers/models/gpt2/tokenization_gpt2.py:110: DeprecationWarning: Deprecated in 0.9.0: BPE.__init__ will not create from files anymore, try `BPE.from_file` instead
+    BPE(
+
+multi_lora_phase3/unittest/test_batching.py::test_grouped_matches_rowwise
+multi_lora_phase3/unittest/test_manager_phase3.py::test_manager_forward_matches_rowwise
+  /usr/local/lib/python3.12/dist-packages/peft/tuners/lora/layer.py:2504: UserWarning: fan_in_fan_out is set to False but the target module is `Conv1D`. Setting fan_in_fan_out to True.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+10 passed, 4 warnings in 11.91s
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:03:53Z
+
+================================================================================
+[EXAMPLE smoke_single_adapter low_vram max64]
+================================================================================
+Command:
+  python multi_lora_phase3/examples/smoke_single_adapter.py --skip-base --low-vram --gpu-id 0 --max-new-tokens 64
+Started: 2026-07-06T08:03:53Z
+--------------------------------------------------------------------------------
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+multi_lora phase-1 smoke
+base_model=Qwen/Qwen2-7B-Instruct
+cases=['lora-1', 'lora-2']
+
+=== [lora-1] device=cuda dtype=torch.bfloat16 low_vram=True ===
+    base=Qwen/Qwen2-7B-Instruct
+    lora=FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA
+
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]
+Loading weights:   1%|          | 2/339 [00:00<00:17, 19.54it/s]
+Loading weights:   5%|▍         | 16/339 [00:00<00:04, 80.45it/s]
+Loading weights:   9%|▊         | 29/339 [00:00<00:03, 87.22it/s]
+Loading weights:  14%|█▎        | 46/339 [00:00<00:02, 115.50it/s]
+Loading weights:  17%|█▋        | 58/339 [00:00<00:02, 108.55it/s]
+Loading weights:  22%|██▏       | 75/339 [00:00<00:02, 110.22it/s]
+Loading weights:  27%|██▋       | 90/339 [00:00<00:02, 113.94it/s]
+Loading weights:  31%|███▏      | 106/339 [00:00<00:01, 125.55it/s]
+Loading weights:  37%|███▋      | 124/339 [00:01<00:01, 131.43it/s]
+Loading weights:  41%|████      | 138/339 [00:01<00:01, 118.55it/s]
+Loading weights:  45%|████▌     | 154/339 [00:01<00:01, 127.03it/s]
+Loading weights:  51%|█████     | 172/339 [00:01<00:01, 134.52it/s]
+Loading weights:  55%|█████▍    | 186/339 [00:01<00:01, 118.11it/s]
+Loading weights: 100%|██████████| 339/339 [00:01<00:00, 204.99it/s]
+Some parameters are on the meta device because they were offloaded to the cpu.
+Some parameters are on the meta device because they were offloaded to the cpu.
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+--- completion ---
+1. France - Paris
+2. Japan - Tokyo
+3. Brazil - Brasília
+
+
+=== [lora-2] device=cuda dtype=torch.bfloat16 low_vram=True ===
+    base=Qwen/Qwen2-7B-Instruct
+    lora=Bibaolong/Context-Faithful-Qwen2-7B-Instruct
+
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]
+Loading weights:   1%|          | 2/339 [00:00<00:19, 17.16it/s]
+Loading weights:   5%|▌         | 17/339 [00:00<00:04, 75.65it/s]
+Loading weights:  10%|█         | 35/339 [00:00<00:02, 116.68it/s]
+Loading weights:  14%|█▍        | 48/339 [00:00<00:02, 120.21it/s]
+Loading weights:  18%|█▊        | 61/339 [00:00<00:02, 114.99it/s]
+Loading weights:  22%|██▏       | 76/339 [00:00<00:02, 115.70it/s]
+Loading weights:  26%|██▋       | 89/339 [00:00<00:02, 110.85it/s]
+Loading weights:  30%|███       | 102/339 [00:00<00:02, 107.92it/s]
+Loading weights:  34%|███▍      | 116/339 [00:01<00:01, 116.54it/s]
+Loading weights:  38%|███▊      | 128/339 [00:01<00:01, 117.45it/s]
+Loading weights:  42%|████▏     | 142/339 [00:01<00:01, 122.37it/s]
+Loading weights:  46%|████▌     | 155/339 [00:01<00:01, 122.33it/s]
+Loading weights:  51%|█████     | 172/339 [00:01<00:01, 129.01it/s]
+Loading weights:  55%|█████▍    | 185/339 [00:01<00:01, 120.91it/s]
+Loading weights: 100%|██████████| 339/339 [00:01<00:00, 200.80it/s]
+Some parameters are on the meta device because they were offloaded to the cpu.
+/usr/local/lib/python3.12/dist-packages/accelerate/utils/modeling.py:1583: UserWarning: Current model requires 512 bytes of buffer for offloaded layers, which seems does not fit any GPU's remaining memory. If you are experiencing a OOM later, please consider using offload_buffers=True.
+  warnings.warn(
+--- completion ---
+1. France - Paris
+2. Japan - Tokyo
+3. Brazil - Brasília
+
+OK: all cases finished.
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:04:31Z
+
+================================================================================
+[EXAMPLE smoke_multi_lora_batch low_vram]
+================================================================================
+Command:
+  python multi_lora_phase3/examples/smoke_multi_lora_batch.py --low-vram --gpu-id 0 --lora-ids a,
+Started: 2026-07-06T08:04:31Z
+--------------------------------------------------------------------------------
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]
+Loading weights:   1%|          | 2/339 [00:00<00:17, 19.19it/s]
+Loading weights:   4%|▎         | 12/339 [00:00<00:04, 65.40it/s]
+Loading weights:   8%|▊         | 28/339 [00:00<00:03, 98.73it/s]
+Loading weights:  12%|█▏        | 41/339 [00:00<00:02, 101.66it/s]
+Loading weights:  16%|█▌        | 53/339 [00:00<00:02, 100.94it/s]
+Loading weights:  19%|█▉        | 65/339 [00:00<00:02, 103.01it/s]
+Loading weights:  23%|██▎       | 77/339 [00:00<00:02, 98.53it/s] 
+Loading weights:  27%|██▋       | 90/339 [00:00<00:02, 107.06it/s]
+Loading weights:  30%|███       | 102/339 [00:01<00:02, 108.54it/s]
+Loading weights:  33%|███▎      | 113/339 [00:01<00:02, 107.42it/s]
+Loading weights:  37%|███▋      | 126/339 [00:01<00:01, 113.70it/s]
+Loading weights:  41%|████      | 139/339 [00:01<00:01, 118.15it/s]
+Loading weights:  45%|████▍     | 151/339 [00:01<00:01, 117.93it/s]
+Loading weights:  48%|████▊     | 163/339 [00:01<00:01, 118.03it/s]
+Loading weights:  52%|█████▏    | 175/339 [00:01<00:01, 117.73it/s]
+Loading weights:  55%|█████▌    | 187/339 [00:01<00:01, 117.57it/s]
+Loading weights: 100%|██████████| 339/339 [00:01<00:00, 189.88it/s]
+Some parameters are on the meta device because they were offloaded to the cpu.
+Some parameters are on the meta device because they were offloaded to the cpu.
+grouped vs rowwise max_abs_diff=0 close=True
+OK
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:04:51Z
+
+================================================================================
+[EXAMPLE smoke_phase3_manager low_vram]
+================================================================================
+Command:
+  python multi_lora_phase3/examples/smoke_phase3_manager.py --low-vram --gpu-id 0
+Started: 2026-07-06T08:04:51Z
+--------------------------------------------------------------------------------
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]
+Loading weights:   1%|          | 2/339 [00:00<00:17, 18.83it/s]
+Loading weights:   5%|▍         | 16/339 [00:00<00:04, 68.03it/s]
+Loading weights:   9%|▉         | 30/339 [00:00<00:03, 87.87it/s]
+Loading weights:  14%|█▎        | 46/339 [00:00<00:02, 111.06it/s]
+Loading weights:  17%|█▋        | 58/339 [00:00<00:02, 105.99it/s]
+Loading weights:  21%|██        | 70/339 [00:00<00:02, 109.48it/s]
+Loading weights:  25%|██▌       | 86/339 [00:00<00:02, 117.22it/s]
+Loading weights:  30%|██▉       | 101/339 [00:00<00:02, 118.97it/s]
+Loading weights:  34%|███▎      | 114/339 [00:01<00:01, 116.08it/s]
+Loading weights:  40%|████      | 136/339 [00:01<00:01, 134.78it/s]
+Loading weights:  44%|████▍     | 150/339 [00:01<00:01, 121.74it/s]
+Loading weights:  50%|████▉     | 168/339 [00:01<00:01, 135.08it/s]
+Loading weights:  54%|█████▍    | 183/339 [00:01<00:01, 130.72it/s]
+Loading weights: 100%|██████████| 339/339 [00:01<00:00, 203.72it/s]
+Some parameters are on the meta device because they were offloaded to the cpu.
+Some parameters are on the meta device because they were offloaded to the cpu.
+Traceback (most recent call last):
+  File "/home/multi_lora/multi_lora_phase3/examples/smoke_phase3_manager.py", line 86, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/multi_lora/multi_lora_phase3/examples/smoke_phase3_manager.py", line 50, in main
+    mgr = MultiLoRAManager.from_pretrained(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/multi_lora/multi_lora_phase3/manager.py", line 98, in from_pretrained
+    mgr.register_adapter(ref, peft_adapter_name=peft_name)
+  File "/home/multi_lora/multi_lora_phase3/manager.py", line 104, in register_adapter
+    weights = extract_adapter_weights(self.model, peft_adapter_name)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/multi_lora/multi_lora_phase3/weights.py", line 64, in extract_adapter_weights
+    a = lora_a_layer.weight.detach().cpu().clone()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NotImplementedError: Cannot copy out of meta tensor; no data!
+--------------------------------------------------------------------------------
+Exit code: 1
+Finished: 2026-07-06T08:05:07Z
+
+================================================================================
+[EXAMPLE smoke_phase3_manager cuda no_low_vram retry]
+================================================================================
+Command:
+  python multi_lora_phase3/examples/smoke_phase3_manager.py
+Started: 2026-07-06T08:05:38Z
+--------------------------------------------------------------------------------
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Traceback (most recent call last):
+  File "/home/multi_lora/multi_lora_phase3/examples/smoke_phase3_manager.py", line 86, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/multi_lora/multi_lora_phase3/examples/smoke_phase3_manager.py", line 43, in main
+    base = load_causal_lm(
+           ^^^^^^^^^^^^^^^
+  File "/home/multi_lora/multi_lora_phase3/hf_runner.py", line 70, in load_causal_lm
+    model = AutoModelForCausalLM.from_pretrained(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/transformers/models/auto/auto_factory.py", line 374, in from_pretrained
+    return model_class.from_pretrained(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/transformers/modeling_utils.py", line 4137, in from_pretrained
+    loading_info, disk_offload_index = cls._load_pretrained_model(model, state_dict, checkpoint_files, load_config)
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/transformers/modeling_utils.py", line 4216, in _load_pretrained_model
+    caching_allocator_warmup(model, expanded_device_map, load_config.hf_quantizer)
+  File "/usr/local/lib/python3.12/dist-packages/transformers/modeling_utils.py", line 4810, in caching_allocator_warmup
+    _ = torch.empty(int(byte_count // 2), dtype=torch.float16, device=device, requires_grad=False)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 14.19 GiB. GPU 0 has a total capacity of 79.18 GiB of which 12.67 GiB is free. Process 1280154 has 65.98 GiB memory in use. Including non-PyTorch memory, this process has 516.00 MiB memory in use. Of the allocated memory 0 bytes is allocated by PyTorch, and 0 bytes is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+--------------------------------------------------------------------------------
+Exit code: 1
+Finished: 2026-07-06T08:05:49Z
+
+================================================================================
+[EXAMPLE smoke_phase3_manager cuda no_low_vram retry2]
+================================================================================
+Command:
+  python multi_lora_phase3/examples/smoke_phase3_manager.py
+Started: 2026-07-06T08:06:38Z
+--------------------------------------------------------------------------------
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]
+Loading weights:   1%|          | 2/339 [00:00<00:37,  8.91it/s]
+Loading weights:   5%|▌         | 17/339 [00:00<00:05, 61.84it/s]
+Loading weights:  11%|█         | 37/339 [00:00<00:02, 110.19it/s]
+Loading weights:  15%|█▌        | 52/339 [00:00<00:02, 117.80it/s]
+Loading weights:  19%|█▉        | 66/339 [00:00<00:02, 103.47it/s]
+Loading weights:  24%|██▍       | 82/339 [00:00<00:02, 117.62it/s]
+Loading weights:  29%|██▉       | 100/339 [00:00<00:01, 126.35it/s]
+Loading weights:  34%|███▎      | 114/339 [00:01<00:01, 114.61it/s]
+Loading weights:  40%|████      | 136/339 [00:01<00:01, 135.77it/s]
+Loading weights:  45%|████▍     | 151/339 [00:01<00:01, 126.32it/s]
+Loading weights:  51%|█████     | 172/339 [00:01<00:01, 131.26it/s]
+Loading weights:  55%|█████▍    | 186/339 [00:01<00:01, 125.16it/s]
+Loading weights:  61%|██████▏   | 208/339 [00:01<00:00, 144.07it/s]
+Loading weights:  66%|██████▌   | 223/339 [00:01<00:00, 135.65it/s]
+Loading weights:  72%|███████▏  | 244/339 [00:02<00:00, 140.16it/s]
+Loading weights:  76%|███████▋  | 259/339 [00:02<00:00, 138.91it/s]
+Loading weights:  83%|████████▎ | 280/339 [00:02<00:00, 149.51it/s]
+Loading weights:  87%|████████▋ | 296/339 [00:02<00:00, 142.30it/s]
+Loading weights:  93%|█████████▎| 315/339 [00:02<00:00, 152.36it/s]
+Loading weights:  98%|█████████▊| 331/339 [00:02<00:00, 142.22it/s]
+Loading weights: 100%|██████████| 339/339 [00:02<00:00, 129.93it/s]
+weight_indices=[1, 0] evictions=0 close=True
+pool_total_evictions=2
+OK
+--------------------------------------------------------------------------------
+Exit code: 0
+Finished: 2026-07-06T08:06:57Z
+
+================================================================================
+[RESULT SUMMARY]
+================================================================================
+SETUP requirements: exit code 0
+UNITTEST pytest multi_lora_phase3/unittest/ -q: 10 passed, exit code 0
+EXAMPLE smoke_single_adapter --skip-base --low-vram --max-new-tokens 64: OK, exit code 0
+EXAMPLE smoke_multi_lora_batch --low-vram --lora-ids "a,": grouped vs rowwise max_abs_diff=0 close=True, exit code 0
+EXAMPLE smoke_phase3_manager --low-vram: failed with Cannot copy out of meta tensor because phase3 extracts LoRA weights for the GPU pool and offloaded/meta tensors have no materialized data, exit code 1
+EXAMPLE smoke_phase3_manager retry without --low-vram: weight_indices=[1, 0] evictions=0 close=True; pool_total_evictions=2; OK, exit code 0
+Conclusion: phase3 unit tests and runnable examples pass when the manager smoke uses materialized CUDA weights instead of low-vram offload.
