@@ -1,0 +1,22 @@
+[project]
+name = "multi-lora"
+version = "0.1.0"
+description = "单进程多 LoRA 推理实验：四个阶段的实现共用同一套依赖环境"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1.0",
+    "transformers>=4.40.0",
+    "peft>=0.11.0",
+    "accelerate>=0.30.0",
+    "triton>=2.1.0; platform_system != 'Windows'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.uv]
+# 仓库根目录不是可安装的包，只用于统一管理依赖与虚拟环境
+package = false
