@@ -24,11 +24,19 @@ from multi_lora_phase2.hf_runner import (  # noqa: E402
     release_model,
 )
 
-DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# Standard PEFT LoRA (rank=32, no modules_to_save); Qwen2-7B family.
-DEFAULT_LORA_1 = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# Second adapter for serial switch; set empty via --lora-2 "" to skip.
-DEFAULT_LORA_2 = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
+# # Standard PEFT LoRA (rank=32, no modules_to_save); Qwen2-7B family.
+# DEFAULT_LORA_1 = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
+# # Second adapter for serial switch; set empty via --lora-2 "" to skip.
+# DEFAULT_LORA_2 = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+
+
+DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
+# rank 16 只训练了qkvo
+DEFAULT_LORA_1 = "GestaltLabs/Jeff-1"
+# rank 64 qkvo 以及 mlp 部分
+DEFAULT_LORA_2 = "/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint"
+
 
 DEFAULT_PROMPT = (
     "<|im_start|>user\nList three countries and their capitals.\n"

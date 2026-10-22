@@ -21,13 +21,13 @@ from peft import PeftModel
 LoraKey = Optional[str]
 
 
-def group_row_indices(lora_ids: Sequence[LoraKey]) -> "OrderedDict[LoraKey, List[int]]":
+def group_row_indices(lora_ids: Sequence[LoraKey]) -> OrderedDict[LoraKey, List[int]]:
     """按 adapter 名分组 batch 行号,保持各 key 首次出现的顺序。
 
     Returns:
         ``adapter_key -> [row indices]``;``None`` 表示基座(无 LoRA)。
     """
-    groups: "OrderedDict[LoraKey, List[int]]" = OrderedDict()
+    groups: OrderedDict[LoraKey, List[int]] = OrderedDict()
     for i, key in enumerate(lora_ids):
         if key not in groups:
             groups[key] = []
@@ -48,6 +48,7 @@ def validate_lora_batch(
     return len(distinct) <= max_loras_per_batch
 
 
+# * 判断lora 是否超过范围了
 def validate_lora_set(
     lora_ids: Sequence[LoraKey],
     *,
@@ -57,6 +58,7 @@ def validate_lora_set(
     return validate_lora_batch(lora_ids, max_loras_per_batch=max_loras_per_batch)
 
 
+# *根据输入来进行一波分组, 计算完又copy 到原来的位置
 @torch.inference_mode()
 def forward_logits_grouped(
     model: PeftModel,
@@ -76,7 +78,8 @@ def forward_logits_grouped(
     Returns:
         ``[B, T, V]`` logits,与逐行独立前向在因果 LM 行独立时一致。
     """
-    # input_ids 形状必须是 [batch, seq_len];因果 LM 一次前向对应整段 prompt。
+    # *input_ids 形状必须是 [batch, seq_len], input_ids 中是 tokenids
+    # 因果 LM 一次前向对应整段 prompt。
     if input_ids.dim() != 2:
         raise ValueError("input_ids must be [batch, seq]")
     b = input_ids.shape[0]
@@ -86,22 +89,28 @@ def forward_logits_grouped(
 
     device = input_ids.device
     # 最终拼回的 logits 缓冲;首次子 batch 前向后再按形状分配。
+    # * output = [batch, seq_len]
     out_logits: Optional[torch.Tensor] = None
 
     # 按 adapter 分组;例如 lora_ids=["a", None, "a"] -> { "a":[0,2], None:[1] }。
     # 同一组内行共享同一套 LoRA(或同为基座),可合并成一次子 batch forward。
+    # * 针对lora 进行分组
+    # * a -> [0, 2]
+    # * b -> [1, 3]
     for key, rows in group_row_indices(lora_ids).items():
         # rows 是原 batch 中的行号列表;转成张量供 index_select / index_copy_ 使用。
+        # * list -> tensor
+        # * tensor([0, 3], device='cuda:0')
         row_idx = torch.tensor(rows, device=device, dtype=torch.long)
         # 从整批 input_ids 中抽出本组行,得到子 batch [G, seq_len](G = 本组行数)。
         sub_ids = input_ids.index_select(0, row_idx)
         # padding 场景下同步抽出对应 attention_mask,避免 pad 位参与错误注意力。
+        # * `index_select(dim, index)` 的第一个参数`0` 表示 在哪个维度上按索引取数 ，必须与张量形状对齐
         sub_mask = (
             attention_mask.index_select(0, row_idx)
             if attention_mask is not None
             else None
         )
-
         if key is None:
             # None 表示该行走纯基座;临时关闭 PEFT 注入的 LoRA 分支。
             with model.disable_adapter():
@@ -110,7 +119,8 @@ def forward_logits_grouped(
                     attention_mask=sub_mask,
                     use_cache=False,  # 仅算 logits,不维护 KV cache(与单步 decode 场景解耦)。
                     return_dict=True,
-                ).logits  # [G, seq_len, vocab_size]
+                ).logits
+            # * [G, seq_len, vocab_size] vocab_size 是词表大小 torch.Size([2, 12, 151936])
         else:
             # 切换到已 load_adapter 的同名权重,再对本子 batch 前向。
             model.set_adapter(key)
@@ -124,9 +134,9 @@ def forward_logits_grouped(
         if out_logits is None:
             # 用第一组输出的 T、V 推断全批输出形状;device/dtype 与子 batch 一致。
             out_logits = torch.empty(
-                b,
-                logits.size(1),
-                logits.size(2),
+                b,  # * 原来的batch size
+                logits.size(1),  # * len
+                logits.size(2),  # * vocb size
                 device=logits.device,
                 dtype=logits.dtype,
             )
@@ -205,7 +215,7 @@ def load_peft_multi_adapter(
 
     model = PeftModel.from_pretrained(
         base_model,
-        adapters[primary],
+        adapters[primary],  # * path
         adapter_name=primary,
         is_trainable=False,
     )
@@ -213,6 +223,27 @@ def load_peft_multi_adapter(
         if name == primary:
             continue
         model.load_adapter(adapters[name], adapter_name=name)
+        """
+        (Pdb) model.model.model.layers[0].self_attn.q_proj
+            lora.Linear(
+            (base_layer): Linear(in_features=2560, out_features=4096, bias=False)
+            (lora_dropout): ModuleDict(
+                (a): Dropout(p=0.05, inplace=False)
+                (b): Dropout(p=0.05, inplace=False)
+            )
+            (lora_A): ModuleDict(
+                (a): Linear(in_features=2560, out_features=16, bias=False)
+                (b): Linear(in_features=2560, out_features=64, bias=False)
+            )
+            (lora_B): ModuleDict(
+                (a): Linear(in_features=16, out_features=4096, bias=False)
+                (b): Linear(in_features=64, out_features=4096, bias=False)
+            )
+            (lora_embedding_A): ParameterDict()
+            (lora_embedding_B): ParameterDict()
+            (lora_magnitude_vector): ModuleDict()
+            )
+        """
     return model
 
 

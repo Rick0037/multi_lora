@@ -11,6 +11,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+# 文件基本上一样的
 @dataclass(frozen=True)
 class ModelSpec:
     """单次 smoke 用例的模型配置(基座 ID、可选 LoRA 路径、日志标签)。"""
