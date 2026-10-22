@@ -142,6 +142,7 @@ def forward_logits_grouped(
             )
         # scatter
         # 把当前iter下的子 batch 的 logits 写回原 batch 的对应行(按 row_idx 散射)。
+        # * 在第0 维度上做copy
         out_logits.index_copy_(0, row_idx, logits)
 
     assert out_logits is not None
