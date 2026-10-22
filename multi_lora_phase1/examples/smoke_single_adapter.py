@@ -11,8 +11,8 @@ import torch
 
 # Allow `python multi_lora_phase1/examples/smoke_single_adapter.py` from repo root.
 _ROOT = Path(__file__).resolve().parents[2]
-if str(_ROOT.parent) not in sys.path:
-    sys.path.insert(0, str(_ROOT.parent))
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from multi_lora_phase1.hf_runner import (  # noqa: E402
     ModelSpec,
@@ -24,11 +24,23 @@ from multi_lora_phase1.hf_runner import (  # noqa: E402
     release_model,
 )
 
-DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# Standard PEFT LoRA (rank=32, no modules_to_save); Qwen2-7B family.
-DEFAULT_LORA_1 = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# Second adapter for serial switch; set empty via --lora-2 "" to skip.
-DEFAULT_LORA_2 = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
+# # Standard PEFT LoRA (rank=32, no modules_to_save); Qwen2-7B family.
+# DEFAULT_LORA_1 = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
+# # Second adapter for serial switch; set empty via --lora-2 "" to skip.
+# DEFAULT_LORA_2 = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+
+# DEFAULT_PROMPT = (
+#     "<|im_start|>user\nList three countries and their capitals.\n"
+#     "<|im_start|>assistant\n"
+# )
+
+
+DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
+# rank 16 只训练了qkvo
+DEFAULT_LORA_1 = "GestaltLabs/Jeff-1"
+# rank 64 qkvo 以及 mlp 部分
+DEFAULT_LORA_2 = "/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint"
 
 DEFAULT_PROMPT = (
     "<|im_start|>user\nList three countries and their capitals.\n"
@@ -40,7 +52,9 @@ def parse_args() -> argparse.Namespace:
     """解析命令行：基座/LoRA ID、生成参数、低显存与设备选项。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
-    p.add_argument("--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)")
+    p.add_argument(
+        "--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)"
+    )
     p.add_argument(
         "--lora-2",
         default=DEFAULT_LORA_2,
@@ -59,7 +73,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Offload part of the 7B model to CPU (for ~10GB free GPU).",
     )
-    p.add_argument("--gpu-id", type=int, default=1, help="GPU index when using --low-vram")
+    p.add_argument(
+        "--gpu-id", type=int, default=1, help="GPU index when using --low-vram"
+    )
     p.add_argument(
         "--device",
         choices=("auto", "cuda", "cpu"),
@@ -98,6 +114,7 @@ def run_case(
     else:
         print(f"    base={base_model} (no LoRA)")
 
+    # pass lora_path to decide load lora model
     model = load_causal_lm(
         base_model,
         device=device if device_name != "auto" or not low_vram else device,
@@ -115,6 +132,7 @@ def run_case(
             temperature=temperature,
         )
     finally:
+        # * 一次性的卸载 base + lora model
         release_model(model)
 
     print(f"--- completion ---\n{text}\n")
@@ -122,7 +140,7 @@ def run_case(
 
 
 def main() -> int:
-    """串行运行 base / lora-1 / lora-2（可选）各一次 smoke。"""
+    """串行运行 base / lora-1 / lora-2(可选)各一次 smoke。"""
     args = parse_args()
     tokenizer = load_tokenizer(args.base_model)
 
@@ -149,6 +167,7 @@ def main() -> int:
     print(f"base_model={args.base_model}")
     print(f"cases={[c.label for c in cases]}")
 
+    # 串行各种lora
     for spec in cases:
         run_case(
             spec,

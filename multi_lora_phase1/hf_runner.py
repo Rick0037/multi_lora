@@ -11,6 +11,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+# frozen = true 实例创建后不可修改
 @dataclass(frozen=True)
 class ModelSpec:
     """单次 smoke 用例的模型配置（基座 ID、可选 LoRA 路径、日志标签）。"""
@@ -127,5 +128,6 @@ def generate_text(
         gen_kwargs["temperature"] = temperature
 
     output_ids = model.generate(**inputs, **gen_kwargs)
+    # * 从input 结束之后获取结果
     new_tokens = output_ids[0, inputs["input_ids"].shape[1] :]
     return tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
