@@ -21,7 +21,7 @@ from multi_lora_phase2.batching import (
 
 @pytest.fixture(scope="module")
 def tiny_peft_two_adapters(tmp_path_factory):
-    """构造 tiny-gpt2 上两个可 ``save_pretrained`` 的 LoRA 目录，供分组/逐行测试复用。"""
+    """构造 tiny-gpt2 上两个可 ``save_pretrained`` 的 LoRA 目录,供分组/逐行测试复用。"""
     tmp = tmp_path_factory.mktemp("peft_adapters")
     base = GPT2LMHeadModel.from_pretrained("sshleifer/tiny-gpt2")
     tokenizer = AutoTokenizer.from_pretrained("sshleifer/tiny-gpt2")
@@ -54,7 +54,7 @@ def test_group_row_indices():
 
 
 def test_validate_lora_batch():
-    """distinct adapter 数（含基座 ``None``）不得超过 ``max_loras_per_batch``。"""
+    """distinct adapter 数(含基座 ``None``)不得超过 ``max_loras_per_batch``。"""
     assert validate_lora_batch(["a", "a", None], max_loras_per_batch=3)
     assert not validate_lora_batch(["a", "b", None], max_loras_per_batch=2)
 

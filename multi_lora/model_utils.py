@@ -8,12 +8,12 @@ import torch.nn as nn
 
 from multi_lora.weights import _module_key
 
-# MVP 默认只替换 attention 四投影；None 表示 weight store 里出现的全部模块都替换
+# MVP 默认只替换 attention 四投影;None 表示 weight store 里出现的全部模块都替换
 ATTENTION_LORA_SUFFIXES = ("q_proj", "k_proj", "v_proj", "o_proj")
 
 
 def replace_submodule(root: nn.Module, module_name: str, new_module: nn.Module) -> None:
-    """按点分路径（如 layers.0.self_attn.q_proj）原地替换子模块."""
+    """按点分路径(如 layers.0.self_attn.q_proj)原地替换子模块."""
     parts = module_name.split(".")
     parent = root
     # 逐级下钻到父模块
@@ -38,7 +38,7 @@ def module_key_matches(
 
 
 def get_inference_model(peft_model: nn.Module) -> nn.Module:
-    """剥离 PeftModel 外壳，得到实际执行 forward 的内部 HF 模型."""
+    """剥离 PeftModel 外壳,得到实际执行 forward 的内部 HF 模型."""
     model = peft_model
     if hasattr(model, "base_model"):
         model = model.base_model

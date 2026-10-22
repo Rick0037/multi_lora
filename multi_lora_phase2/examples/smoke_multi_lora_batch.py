@@ -34,7 +34,7 @@ ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
 
 
 def parse_args():
-    """解析命令行：双 adapter 路径、每行 ``lora_ids``、设备与低显存选项。"""
+    """解析命令行;双 adapter 路径、每行 ``lora_ids``、设备与低显存选项。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
     p.add_argument("--adapter-a", default=ADAPTER_A)
@@ -68,7 +68,7 @@ def parse_args():
 
 
 def main() -> int:
-    """加载双 LoRA，对比 ``forward_logits_grouped`` 与逐行对照的 logits 是否一致。"""
+    """加载双 LoRA,对比 ``forward_logits_grouped`` 与逐行对照的 logits 是否一致。"""
     args = parse_args()
     names = [x.strip() for x in args.names.split(",") if x.strip()]
     if len(names) != 2:
@@ -89,7 +89,9 @@ def main() -> int:
 
     raw_ids = [x.strip() for x in args.lora_ids.split(",")]
     if len(raw_ids) != len(texts):
-        raise SystemExit("--lora-ids must have one entry per prompt (use empty for base)")
+        raise SystemExit(
+            "--lora-ids must have one entry per prompt (use empty for base)"
+        )
     lora_ids: list[str | None] = [x if x else None for x in raw_ids]
 
     if args.device == "cpu":
@@ -123,7 +125,9 @@ def main() -> int:
     )
 
     if attention_mask is None:
-        last_idx = torch.full((g.size(0),), g.size(1) - 1, device=g.device, dtype=torch.long)
+        last_idx = torch.full(
+            (g.size(0),), g.size(1) - 1, device=g.device, dtype=torch.long
+        )
     else:
         last_idx = attention_mask.sum(dim=1).to(device=g.device, dtype=torch.long) - 1
     rows = torch.arange(g.size(0), device=g.device)

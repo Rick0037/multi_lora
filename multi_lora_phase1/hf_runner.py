@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # frozen = true 实例创建后不可修改
 @dataclass(frozen=True)
 class ModelSpec:
-    """单次 smoke 用例的模型配置（基座 ID、可选 LoRA 路径、日志标签）。"""
+    """单次 smoke 用例的模型配置(基座 ID、可选 LoRA 路径、日志标签)。"""
 
     base_model: str
     lora_path: Optional[str] = None
@@ -22,21 +22,21 @@ class ModelSpec:
 
 
 def pick_device() -> torch.device:
-    """选择计算设备：有 CUDA 则用 ``cuda``，否则 ``cpu``。"""
+    """选择计算设备;有 CUDA 则用 ``cuda``,否则 ``cpu``。"""
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
 
 
 def pick_dtype(device: torch.device) -> torch.dtype:
-    """按设备选择推理 dtype（GPU 优先 bfloat16/float16，CPU 为 float32）。"""
+    """按设备选择推理 dtype(GPU 优先 bfloat16/float16,CPU 为 float32)。"""
     if device.type == "cuda":
         return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     return torch.float32
 
 
 def load_tokenizer(model_id: str):
-    """加载 Hugging Face tokenizer；若无 pad_token 则设为 eos_token。"""
+    """加载 Hugging Face tokenizer;若无 pad_token 则设为 eos_token。"""
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -52,7 +52,7 @@ def load_causal_lm(
     low_vram: bool = False,
     gpu_id: int = 0,
 ) -> torch.nn.Module:
-    """加载大语言模型；若 ``lora_path`` 非空则包装为 ``PeftModel`` 并 ``eval()``。
+    """加载大语言模型;若 ``lora_path`` 非空则包装为 ``PeftModel`` 并 ``eval()``。
 
     ``low_vram=True`` 时通过 ``device_map="auto"`` 将部分层 offload 到 CPU。
     """
@@ -92,12 +92,12 @@ def load_causal_lm(
 
 
 def model_input_device(model: torch.nn.Module) -> torch.device:
-    """返回模型参数所在设备（用于将 ``input_ids`` 搬到正确 device）。"""
+    """返回模型参数所在设备(用于将 ``input_ids`` 搬到正确 device)。"""
     return next(model.parameters()).device
 
 
 def release_model(model: torch.nn.Module) -> None:
-    """释放模型引用，并执行 ``gc.collect()`` / ``empty_cache()``。"""
+    """释放模型引用,并执行 ``gc.collect()`` / ``empty_cache()``。"""
     del model
     gc.collect()
     if torch.cuda.is_available():
@@ -113,7 +113,7 @@ def generate_text(
     max_new_tokens: int = 32,
     temperature: float = 0.0,
 ) -> str:
-    """对单条 prompt 调用 ``model.generate``，返回新生成文本（不含 prompt 部分）。"""
+    """对单条 prompt 调用 ``model.generate``,返回新生成文本(不含 prompt 部分)。"""
     inputs = tokenizer(prompt, return_tensors="pt")
     input_device = model_input_device(model)
     inputs = {k: v.to(input_device) for k, v in inputs.items()}

@@ -37,7 +37,7 @@ def validate_lora_batch(
 ) -> bool:
     """判断单 batch 内 distinct adapter 数量是否在配置上限内。
 
-    None 计为一个逻辑槽位（基座模型）。
+    None 计为一个逻辑槽位(基座模型)。
     """
     distinct = set(lora_ids)
     return len(distinct) <= max_loras_per_batch
@@ -61,41 +61,43 @@ def forward_logits_grouped(
     lora_ids: Sequence[LoraKey],
 ) -> torch.Tensor:
     """Batched forward with per-row LoRA: group rows, forward each group, scatter logits."""
-    # input_ids 形状必须是 [batch, seq_len]；因果 LM 一次前向对应整段 prompt。
+    # input_ids 形状必须是 [batch, seq_len];因果 LM 一次前向对应整段 prompt。
     if input_ids.dim() != 2:
         raise ValueError("input_ids must be [batch, seq]")
     b = input_ids.shape[0]
-    # lora_ids[i] 表示第 i 条序列用哪个 adapter；长度必须与 batch 维一致。
+    # lora_ids[i] 表示第 i 条序列用哪个 adapter;长度必须与 batch 维一致。
     if len(lora_ids) != b:
         raise ValueError("lora_ids length must match batch size")
 
     device = input_ids.device
-    # 最终拼回的 logits 缓冲；首次子 batch 前向后再按形状分配。
+    # 最终拼回的 logits 缓冲;首次子 batch 前向后再按形状分配。
     out_logits: Optional[torch.Tensor] = None
 
-    # 按 adapter 分组：例如 lora_ids=["a", None, "a"] -> { "a":[0,2], None:[1] }。
-    # 同一组内行共享同一套 LoRA（或同为基座），可合并成一次子 batch forward。
+    # 按 adapter 分组;例如 lora_ids=["a", None, "a"] -> { "a":[0,2], None:[1] }。
+    # 同一组内行共享同一套 LoRA(或同为基座),可合并成一次子 batch forward。
     for key, rows in group_row_indices(lora_ids).items():
-        # rows 是原 batch 中的行号列表；转成张量供 index_select / index_copy_ 使用。
+        # rows 是原 batch 中的行号列表;转成张量供 index_select / index_copy_ 使用。
         row_idx = torch.tensor(rows, device=device, dtype=torch.long)
-        # 从整批 input_ids 中抽出本组行，得到子 batch [G, seq_len]（G = 本组行数）。
+        # 从整批 input_ids 中抽出本组行,得到子 batch [G, seq_len](G = 本组行数)。
         sub_ids = input_ids.index_select(0, row_idx)
-        # padding 场景下同步抽出对应 attention_mask，避免 pad 位参与错误注意力。
+        # padding 场景下同步抽出对应 attention_mask,避免 pad 位参与错误注意力。
         sub_mask = (
-            attention_mask.index_select(0, row_idx) if attention_mask is not None else None
+            attention_mask.index_select(0, row_idx)
+            if attention_mask is not None
+            else None
         )
 
         if key is None:
-            # None 表示该行走纯基座：临时关闭 PEFT 注入的 LoRA 分支。
+            # None 表示该行走纯基座;临时关闭 PEFT 注入的 LoRA 分支。
             with model.disable_adapter():
                 logits = model(
                     input_ids=sub_ids,
                     attention_mask=sub_mask,
-                    use_cache=False,  # 仅算 logits，不维护 KV cache（与单步 decode 场景解耦）。
+                    use_cache=False,  # 仅算 logits,不维护 KV cache(与单步 decode 场景解耦)。
                     return_dict=True,
                 ).logits  # [G, seq_len, vocab_size]
         else:
-            # 切换到已 load_adapter 的同名权重，再对本子 batch 前向。
+            # 切换到已 load_adapter 的同名权重,再对本子 batch 前向。
             model.set_adapter(key)
             logits = model(
                 input_ids=sub_ids,
@@ -105,7 +107,7 @@ def forward_logits_grouped(
             ).logits
 
         if out_logits is None:
-            # 用第一组输出的 T、V 推断全批输出形状；device/dtype 与子 batch 对齐。
+            # 用第一组输出的 T、V 推断全批输出形状;device/dtype 与子 batch 对齐。
             out_logits = torch.empty(
                 b,
                 logits.size(1),
@@ -114,7 +116,7 @@ def forward_logits_grouped(
                 dtype=logits.dtype,
             )
         # scatter
-        # 把当前iter下的子 batch 的 logits 写回原 batch 的对应行（按 row_idx 散射）。
+        # 把当前iter下的子 batch 的 logits 写回原 batch 的对应行(按 row_idx 散射)。
         out_logits.index_copy_(0, row_idx, logits)
 
     assert out_logits is not None
@@ -131,15 +133,15 @@ def forward_logits_rowwise_reference(
 ) -> torch.Tensor:
     """Reference: B separate forwards (batch size 1). Should match forward_logits_grouped."""
     b = input_ids.shape[0]
-    # 逐行保存每次 bs=1 前向的 logits，最后在 batch 维拼接成 [B, T, V]。
+    # 逐行保存每次 bs=1 前向的 logits,最后在 batch 维拼接成 [B, T, V]。
     pieces: List[torch.Tensor] = []
     for i in range(b):
-        # 只取第 i 行，保持二维 [1, seq_len]，与 HF 单条推理接口一致。
+        # 只取第 i 行,保持二维 [1, seq_len],与 HF 单条推理接口一致。
         row_ids = input_ids[i : i + 1]
         row_mask = attention_mask[i : i + 1] if attention_mask is not None else None
         key = lora_ids[i]
         if key is None:
-            # 第 i 行使用基座：关闭 adapter 后单独前向（逐行对照实现）。
+            # 第 i 行使用基座;关闭 adapter 后单独前向(逐行对照实现)。
             with model.disable_adapter():
                 log = model(
                     input_ids=row_ids,
@@ -148,7 +150,7 @@ def forward_logits_rowwise_reference(
                     return_dict=True,
                 ).logits  # [1, seq_len, vocab_size]
         else:
-            # 第 i 行切换到指定 adapter，再 bs=1 前向。
+            # 第 i 行切换到指定 adapter,再 bs=1 前向。
             model.set_adapter(key)
             log = model(
                 input_ids=row_ids,
@@ -157,7 +159,7 @@ def forward_logits_rowwise_reference(
                 return_dict=True,
             ).logits
         pieces.append(log)
-    # dim=0 拼接 B 个 [1,T,V] -> [B,T,V]，应与 grouped 版 index_copy_ 结果一致。
+    # dim=0 拼接 B 个 [1,T,V] -> [B,T,V],应与 grouped 版 index_copy_ 结果一致。
     return torch.cat(pieces, dim=0)
 
 

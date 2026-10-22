@@ -77,7 +77,9 @@ def test_pool_gpu_matches_cpu_store(tiny_mgr):
     rank, _ = mgr.pool._slot_meta[slot]
     a_cpu, b_cpu = mgr._weight_store[id_a].modules[key]
     assert torch.allclose(a_gpu[:rank], a_cpu.to(dtype=a_gpu.dtype), rtol=0, atol=1e-6)
-    assert torch.allclose(b_gpu[:, :rank], b_cpu.to(dtype=b_gpu.dtype), rtol=0, atol=1e-6)
+    assert torch.allclose(
+        b_gpu[:, :rank], b_cpu.to(dtype=b_gpu.dtype), rtol=0, atol=1e-6
+    )
 
     x = torch.randn(2, a_cpu.shape[1])
     d_cpu = lora_delta(x, a_cpu, b_cpu, mgr._weight_store[id_a].scaling, rank=rank)

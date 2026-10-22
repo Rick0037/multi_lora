@@ -17,7 +17,7 @@ def test_register_acquire_release():
 
 
 def test_acquire_list_and_base():
-    """acquire 列表时 None/空字符串应映射为 base（None）。"""
+    """acquire 列表时 None/空字符串应映射为 base(None)。"""
     reg = LoRARegistry()
     reg.register(LoRARef(lora_name="x", lora_path="p"))
     ids = reg.acquire(["x", None, ""])

@@ -49,7 +49,7 @@ DEFAULT_PROMPT = (
 
 
 def parse_args() -> argparse.Namespace:
-    """解析命令行：基座/LoRA ID、生成参数、低显存与设备选项。"""
+    """解析命令行;基座/LoRA ID、生成参数、低显存与设备选项。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
     p.add_argument(
@@ -97,7 +97,7 @@ def run_case(
     gpu_id: int,
     device_name: str,
 ) -> str:
-    """加载单个 ``ModelSpec``（基座或 LoRA），生成一次并打印结果，最后释放显存。"""
+    """加载单个 ``ModelSpec``(基座或 LoRA),生成一次并打印结果,最后释放显存。"""
     if device_name == "cpu":
         device = torch.device("cpu")
         dtype = pick_dtype(device)

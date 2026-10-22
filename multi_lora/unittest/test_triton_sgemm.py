@@ -1,4 +1,4 @@
-"""CUDA Triton 整模型 forward vs Torch backend（ToyLM）."""
+"""CUDA Triton 整模型 forward vs Torch backend(ToyLM)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class ToyLM(nn.Module):
 
 @pytest.fixture(scope="module")
 def cuda_mgr_pair(tmp_path_factory):
-    """在同一 base 权重上构造 torch 与 triton 两个 manager，便于对比。"""
+    """在同一 base 权重上构造 torch 与 triton 两个 manager,便于对比。"""
     tmp = tmp_path_factory.mktemp("triton_pair")
     cfg = LoraConfig(
         r=8,
@@ -45,20 +45,28 @@ def cuda_mgr_pair(tmp_path_factory):
         m = ToyLM().cuda()
         get_peft_model(m, cfg).save_pretrained(tmp / name)
 
-    # 固定 base 权重，消除随机初始化差异
+    # 固定 base 权重,消除随机初始化差异
     base_sd = ToyLM().cuda().state_dict()
     adapters = {"a": str(tmp / "a"), "b": str(tmp / "b")}
 
     base_torch = ToyLM().cuda()
     base_torch.load_state_dict(base_sd)
     torch_mgr = MultiLoRAManager.from_pretrained(
-        base_torch, adapters, max_loras_per_batch=3, max_lora_rank=16, lora_backend="torch"
+        base_torch,
+        adapters,
+        max_loras_per_batch=3,
+        max_lora_rank=16,
+        lora_backend="torch",
     )
 
     base_triton = ToyLM().cuda()
     base_triton.load_state_dict(base_sd)
     triton_mgr = MultiLoRAManager.from_pretrained(
-        base_triton, adapters, max_loras_per_batch=3, max_lora_rank=16, lora_backend="triton"
+        base_triton,
+        adapters,
+        max_loras_per_batch=3,
+        max_lora_rank=16,
+        lora_backend="triton",
     )
     return torch_mgr, triton_mgr
 

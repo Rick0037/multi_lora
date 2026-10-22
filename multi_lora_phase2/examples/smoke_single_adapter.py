@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase-2 串行 smoke：Qwen2-7B + 一至两个 PEFT LoRA（每次重载，非 batch 混用）。"""
+"""Phase-2 串行 smoke;Qwen2-7B + 一至两个 PEFT LoRA(每次重载,非 batch 混用)。"""
 
 from __future__ import annotations
 
@@ -37,10 +37,12 @@ DEFAULT_PROMPT = (
 
 
 def parse_args() -> argparse.Namespace:
-    """解析命令行：基座/LoRA ID、生成参数、低显存与设备选项。"""
+    """解析命令行;基座/LoRA ID、生成参数、低显存与设备选项。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
-    p.add_argument("--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)")
+    p.add_argument(
+        "--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)"
+    )
     p.add_argument(
         "--lora-2",
         default=DEFAULT_LORA_2,
@@ -59,7 +61,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Offload part of the 7B model to CPU (for ~10GB free GPU).",
     )
-    p.add_argument("--gpu-id", type=int, default=1, help="GPU index when using --low-vram")
+    p.add_argument(
+        "--gpu-id", type=int, default=1, help="GPU index when using --low-vram"
+    )
     p.add_argument(
         "--device",
         choices=("auto", "cuda", "cpu"),
@@ -81,7 +85,7 @@ def run_case(
     gpu_id: int,
     device_name: str,
 ) -> str:
-    """加载单个 ``ModelSpec``（基座或 LoRA），生成一次并打印结果，最后释放显存。"""
+    """加载单个 ``ModelSpec``(基座或 LoRA),生成一次并打印结果,最后释放显存。"""
     if device_name == "cpu":
         device = torch.device("cpu")
         dtype = pick_dtype(device)
@@ -122,7 +126,7 @@ def run_case(
 
 
 def main() -> int:
-    """串行运行 base / lora-1 / lora-2（可选）各一次 smoke。"""
+    """串行运行 base / lora-1 / lora-2(可选)各一次 smoke。"""
     args = parse_args()
     tokenizer = load_tokenizer(args.base_model)
 

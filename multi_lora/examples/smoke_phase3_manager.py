@@ -14,7 +14,13 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from multi_lora.batching import forward_logits_rowwise_reference, logits_close
-from multi_lora.hf_runner import load_causal_lm, load_tokenizer, pick_device, pick_dtype, release_model
+from multi_lora.hf_runner import (
+    load_causal_lm,
+    load_tokenizer,
+    pick_device,
+    pick_dtype,
+    release_model,
+)
 from multi_lora.manager import MultiLoRAManager
 
 DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
@@ -23,7 +29,7 @@ ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
 
 
 def main() -> int:
-    """Phase-3 冒烟：manager grouped forward 与逐行参考 logits 对比，并演练 pool 驱逐。"""
+    """Phase-3 冒烟;manager grouped forward 与逐行参考 logits 对比,并演练 pool 驱逐。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
     p.add_argument("--adapter-a", default=ADAPTER_A)
@@ -55,7 +61,7 @@ def main() -> int:
         max_lora_rank=64,
     )
     id_a = mgr._peft_name_to_id["a"]
-    # 第一行用 adapter a，第二行 base（None）
+    # 第一行用 adapter a,第二行 base(None)
     lora_ids = [id_a, None]
 
     enc = {k: v.to(next(mgr.model.parameters()).device) for k, v in enc.items()}
@@ -64,7 +70,7 @@ def main() -> int:
         attention_mask=enc["attention_mask"],
         lora_ids=lora_ids,
     )
-    # 将内部 lora_id 映射为 PEFT adapter 名，供逐行参考使用
+    # 将内部 lora_id 映射为 PEFT adapter 名,供逐行参考使用
     peft_keys = [mgr.peft_name_for_row(x) for x in lora_ids]
     ref = forward_logits_rowwise_reference(
         mgr.model,
@@ -76,7 +82,7 @@ def main() -> int:
     print(f"weight_indices={info.weight_indices} evictions={info.evictions} close={ok}")
 
     id_b = mgr._peft_name_to_id["b"]
-    # 连续两次 prepare，触发 pool 槽位复用/驱逐
+    # 连续两次 prepare,触发 pool 槽位复用/驱逐
     mgr.prepare_lora_batch([id_a, id_b])
     mgr.prepare_lora_batch([id_a, None])
     print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")

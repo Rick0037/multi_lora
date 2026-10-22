@@ -1,4 +1,4 @@
-"""LoRA segment GEMM A 阶段 Triton kernel：x @ A^T，按 segment 选 slot."""
+"""LoRA segment GEMM A 阶段 Triton kernel;x @ A^T,按 segment 选 slot."""
 
 import torch
 import triton
@@ -30,15 +30,15 @@ def _sgemm_lora_a_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
 ):
-    """Segment batched LoRA A GEMM：output[seg] = x[seg] @ weights[slot]^T."""
+    """Segment batched LoRA A GEMM;output[seg] = x[seg] @ weights[slot]^T."""
 
-    # axis=1：每个 program 对应 batch 内一个 segment（通常一条序列）
+    # axis=1;每个 program 对应 batch 内一个 segment(通常一条序列)
     batch_id = tl.program_id(axis=1)
     w_index = tl.load(weight_indices + batch_id)
     rank = tl.load(lora_ranks + w_index)
 
     if rank == 0:
-        return  # 基座 slot：无 LoRA，输出区域保持 0
+        return  # 基座 slot;无 LoRA,输出区域保持 0
 
     pid = tl.program_id(axis=0)
     seg_start = tl.load(seg_indptr + batch_id)
@@ -61,7 +61,7 @@ def _sgemm_lora_a_kernel(
         k_offset[:, None] * w_stride_2 + n_offset[None, :] * w_stride_1
     )
 
-    # K 维分块累加：partial_sum += x_tile @ w_tile
+    # K 维分块累加;partial_sum += x_tile @ w_tile
     partial_sum = tl.zeros((BLOCK_S, BLOCK_N), dtype=tl.float32)
     for k in range(0, tl.cdiv(K, BLOCK_K)):
         x_tile = tl.load(
@@ -93,10 +93,10 @@ def sgemm_lora_a_fwd(
     kernel_input_metadata: KernelInputMetaData,
     stack_num: int = 1,
 ) -> torch.Tensor:
-    """Host 入口：LoRA A segment SGEMM.
+    """Host 入口;LoRA A segment SGEMM.
 
-    x: (S, in_dim)；weights: (K, max_rank, in_dim)；output: (S, max_rank)。
-    grid 第二维 = bs（segment 数）；第一维覆盖 max_len × rank 分块。
+    x: (S, in_dim);weights: (K, max_rank, in_dim);output: (S, max_rank)。
+    grid 第二维 = bs(segment 数);第一维覆盖 max_len * rank 分块。
     """
     assert x.is_contiguous()
     assert weights.is_contiguous()

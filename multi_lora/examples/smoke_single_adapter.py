@@ -37,10 +37,12 @@ DEFAULT_PROMPT = (
 
 
 def parse_args() -> argparse.Namespace:
-    """解析命令行：base/LoRA 路径、生成参数与设备选项。"""
+    """解析命令行;base/LoRA 路径、生成参数与设备选项。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
-    p.add_argument("--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)")
+    p.add_argument(
+        "--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)"
+    )
     p.add_argument(
         "--lora-2",
         default=DEFAULT_LORA_2,
@@ -59,7 +61,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Offload part of the 7B model to CPU (for ~10GB free GPU).",
     )
-    p.add_argument("--gpu-id", type=int, default=1, help="GPU index when using --low-vram")
+    p.add_argument(
+        "--gpu-id", type=int, default=1, help="GPU index when using --low-vram"
+    )
     p.add_argument(
         "--device",
         choices=("auto", "cuda", "cpu"),
@@ -81,7 +85,7 @@ def run_case(
     gpu_id: int,
     device_name: str,
 ) -> str:
-    """按 ModelSpec 加载模型（可选 LoRA）并生成一条 completion。"""
+    """按 ModelSpec 加载模型(可选 LoRA)并生成一条 completion。"""
     if device_name == "cpu":
         device = torch.device("cpu")
         dtype = pick_dtype(device)
@@ -122,7 +126,7 @@ def run_case(
 
 
 def main() -> int:
-    """Phase-1 冒烟：串行运行 base / lora-1 / lora-2 三种加载方式。"""
+    """Phase-1 冒烟;串行运行 base / lora-1 / lora-2 三种加载方式。"""
     args = parse_args()
     tokenizer = load_tokenizer(args.base_model)
 

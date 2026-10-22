@@ -38,7 +38,7 @@ def tiny_mgr(tmp_path_factory):
 
     mgr = MultiLoRAManager.from_pretrained(
         GPT2LMHeadModel.from_pretrained("sshleifer/tiny-gpt2"),
-        {"a": str(tmp / "a"), "b": str(tmp / "b")}, # adapters
+        {"a": str(tmp / "a"), "b": str(tmp / "b")},  # adapters
         max_loras_per_batch=2,
         max_lora_rank=8,
         convert_lora_layers=False,
@@ -71,7 +71,7 @@ def test_manager_forward_matches_rowwise(tiny_mgr):
 
 
 def test_pool_gpu_matches_cpu_store(tiny_mgr):
-    """GPU pool slot 中的 LoRA 权重应与 CPU weight store 一致，且 delta 计算一致。"""
+    """GPU pool slot 中的 LoRA 权重应与 CPU weight store 一致,且 delta 计算一致。"""
     mgr, _ = tiny_mgr
     id_a = mgr._peft_name_to_id["a"]
     mgr.prepare_lora_batch([id_a])
@@ -82,7 +82,9 @@ def test_pool_gpu_matches_cpu_store(tiny_mgr):
     a_cpu, b_cpu = mgr._weight_store[id_a].modules[key]
     # 有效 rank 范围内 GPU 与 CPU 权重应对齐
     assert torch.allclose(a_gpu[:rank], a_cpu.to(dtype=a_gpu.dtype), rtol=0, atol=1e-6)
-    assert torch.allclose(b_gpu[:, :rank], b_cpu.to(dtype=b_gpu.dtype), rtol=0, atol=1e-6)
+    assert torch.allclose(
+        b_gpu[:, :rank], b_cpu.to(dtype=b_gpu.dtype), rtol=0, atol=1e-6
+    )
 
     x = torch.randn(2, a_cpu.shape[1])
     d_cpu = lora_delta(x, a_cpu, b_cpu, mgr._weight_store[id_a].scaling, rank=rank)
@@ -97,5 +99,5 @@ def test_eviction_across_batches(tiny_mgr):
     mgr.prepare_lora_batch([id_a, id_b])
     mgr.prepare_lora_batch([id_a, None])
     assert mgr.pool.eviction_policy.eviction_count >= 1
-    # id_b 已被驱逐，不再映射到 buffer
+    # id_b 已被驱逐,不再映射到 buffer
     assert id_b not in mgr.pool.uid_to_buffer_id

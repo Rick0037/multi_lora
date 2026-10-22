@@ -41,7 +41,7 @@ def test_pool_eviction_lru():
     assert pool.eviction_policy.eviction_count >= 1
     assert id_c in pool.uid_to_buffer_id
     assert None in pool.uid_to_buffer_id
-    # 仅 2 槽：加载 c 与 None 后，先前的 a、b 都应被驱逐
+    # 仅 2 槽;加载 c 与 None 后,先前的 a、b 都应被驱逐
     assert id_a not in pool.uid_to_buffer_id
     assert id_b not in pool.uid_to_buffer_id
 

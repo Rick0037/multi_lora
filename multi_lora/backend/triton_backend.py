@@ -1,4 +1,4 @@
-"""Triton segment-SGEMM 后端（CUDA）；CPU 或无 Triton 时回退 Torch."""
+"""Triton segment-SGEMM 后端(CUDA);CPU 或无 Triton 时回退 Torch."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class TritonLoRABackend(LoRABackend):
     fuse_output_add = True
 
     def __init__(self) -> None:
-        """内嵌 Torch 后端，用于非 CUDA 或 kernel 不可用时的回退."""
+        """内嵌 Torch 后端,用于非 CUDA 或 kernel 不可用时的回退."""
         super().__init__()
         self._torch = TorchLoRABackend()
 
@@ -33,7 +33,7 @@ class TritonLoRABackend(LoRABackend):
         self._torch.set_kernel_input_metadata(metadata)
 
     def run_lora_a_sgemm(self, x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        """CUDA + Triton 可用时走 kernel；否则委托 Torch 逐 segment 实现."""
+        """CUDA + Triton 可用时走 kernel;否则委托 Torch 逐 segment 实现."""
         if not (x.is_cuda and _HAS_TRITON_KERNELS):
             return self._torch.run_lora_a_sgemm(x, weights)
         return sgemm_lora_a_fwd(
@@ -46,7 +46,7 @@ class TritonLoRABackend(LoRABackend):
         weights: torch.Tensor,
         base_output: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """B 阶段支持 fused add：kernel 内 load 基座输出再 store 累加结果."""
+        """B 阶段支持 fused add;kernel 内 load 基座输出再 store 累加结果."""
         if not (x.is_cuda and _HAS_TRITON_KERNELS):
             return self._torch.run_lora_b_sgemm(x, weights, base_output=base_output)
         return sgemm_lora_b_fwd(
@@ -57,7 +57,7 @@ class TritonLoRABackend(LoRABackend):
         )
 
     def _int32_kernel_input_metadata(self) -> KernelInputMetaData:
-        """Triton kernel 要求 weight_indices 等为 int32；必要时克隆一份视图."""
+        """Triton kernel 要求 weight_indices 等为 int32;必要时克隆一份视图."""
         meta = self.kernel_input_metadata
         if meta is None:
             raise RuntimeError("kernel_input_metadata not set")

@@ -67,11 +67,15 @@ DEFAULT_REQUESTS: List[Tuple[Optional[str], str]] = [
 
 
 def parse_args() -> argparse.Namespace:
-    """解析命令行：模型/适配器路径、生成参数与 batched prefill 开关。"""
+    """解析命令行;模型/适配器路径、生成参数与 batched prefill 开关。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
-    p.add_argument("--adapter-a", default=ADAPTER_A, help="PEFT adapter id/path (name: a)")
-    p.add_argument("--adapter-b", default=ADAPTER_B, help="PEFT adapter id/path (name: b)")
+    p.add_argument(
+        "--adapter-a", default=ADAPTER_A, help="PEFT adapter id/path (name: a)"
+    )
+    p.add_argument(
+        "--adapter-b", default=ADAPTER_B, help="PEFT adapter id/path (name: b)"
+    )
     p.add_argument(
         "--prompts-file",
         type=Path,
@@ -94,7 +98,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_requests(path: Path) -> List[Tuple[Optional[str], str]]:
-    """解析 prompts 文件：首行适配器名（空/base/none 表示 base），其余为 prompt 文本。"""
+    """解析 prompts 文件;首行适配器名(空/base/none 表示 base),其余为 prompt 文本。"""
     text = path.read_text(encoding="utf-8")
     blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
     out: List[Tuple[Optional[str], str]] = []
@@ -124,7 +128,7 @@ def generate_with_peft(
 ) -> str:
     """用 PEFT set_adapter/disable_adapter 对单条 prompt 做自回归生成。"""
     if peft_adapter is None:
-        # base 模型：临时关闭 LoRA
+        # base 模型;临时关闭 LoRA
         ctx = model.disable_adapter()
     else:
         model.set_adapter(peft_adapter)
@@ -151,7 +155,7 @@ def run_one_request(
     """获取适配器引用、预热 GPU pool slot、生成文本并释放引用。"""
     lora_id = mgr.registry.acquire(adapter_name)
     try:
-        # 将当前 LoRA 加载到 pool，供后续 PEFT forward 使用
+        # 将当前 LoRA 加载到 pool,供后续 PEFT forward 使用
         info = mgr.prepare_lora_batch([lora_id])
         peft_name = mgr.peft_name_for_row(lora_id)
         label = adapter_name if adapter_name else "base"
@@ -177,7 +181,7 @@ def batched_prefill_check(
     tokenizer,
     requests: List[Tuple[Optional[str], str]],
 ) -> None:
-    """一次 grouped forward：每行不同 LoRA，仅 prefill 并打印末 token logits 范数。"""
+    """一次 grouped forward;每行不同 LoRA,仅 prefill 并打印末 token logits 范数。"""
     texts = [p for _, p in requests]
     enc = tokenizer(texts, padding=True, return_tensors="pt")
     device = model_input_device(mgr.model)
@@ -198,9 +202,11 @@ def batched_prefill_check(
 
 
 def main() -> int:
-    """加载 Qwen2-7B 与 multi-LoRA manager，逐条请求生成并可选 batched prefill 校验。"""
+    """加载 Qwen2-7B 与 multi-LoRA manager,逐条请求生成并可选 batched prefill 校验。"""
     args = parse_args()
-    requests = load_requests(args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
+    requests = (
+        load_requests(args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
+    )
 
     if args.device == "cpu":
         device = torch.device("cpu")
@@ -211,7 +217,9 @@ def main() -> int:
     dtype = pick_dtype(device)
 
     print("multi_lora Qwen2-7B multi-LoRA inference")
-    print(f"base={args.base_model} device={device} dtype={dtype} low_vram={args.low_vram}")
+    print(
+        f"base={args.base_model} device={device} dtype={dtype} low_vram={args.low_vram}"
+    )
     print(f"adapters: a={args.adapter_a}")
     print(f"          b={args.adapter_b}")
     print(f"requests={len(requests)}")

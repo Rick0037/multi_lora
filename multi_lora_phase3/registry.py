@@ -1,9 +1,9 @@
-"""LoRA 适配器注册表：元数据、稳定 ID 与引用计数。有了这个之后，lora id为一个随机生成的str，而不再和lora name一样
+"""LoRA 适配器注册表;元数据、稳定 ID 与引用计数。有了这个之后,lora id为一个随机生成的str,而不再和lora name一样
 
-功能（与 pool.py / manager.py 的配合）：
-- 对外暴露人类可读的 lora_name；对内用稳定 lora_id（uuid）与 GPU 槽位 uid 对齐。
-- acquire / release 做引用计数：模拟 tokenizer 侧请求开始/结束，防止卸载仍在用的 adapter。
-- touch 供 LRU 驱逐侧按最近使用排序（LRU）
+功能(与 pool.py / manager.py 的配合);
+- 对外暴露人类可读的 lora_name;对内用稳定 lora_id(uuid)与 GPU 槽位 uid 对齐。
+- acquire / release 做引用计数;模拟 tokenizer 侧请求开始/结束,防止卸载仍在用的 adapter。
+- touch 供 LRU 驱逐侧按最近使用排序(LRU)
 """
 
 from __future__ import annotations
@@ -16,15 +16,16 @@ from uuid import uuid4
 
 @dataclass(frozen=True)
 class LoRARef:
-    """lora模型的元数据集合：稳定 lora_id、可读 lora_name / lora_path。
-    有了这个之后，lora id为一个随机生成的str，而不再和lora name一样
-    pinned=True 时池驱逐会跳过该 uid，避免卸载仍可能被调度的权重。
+    """lora模型的元数据集合;稳定 lora_id、可读 lora_name / lora_path。
+    有了这个之后,lora id为一个随机生成的str,而不再和lora name一样
+    pinned=True 时池驱逐会跳过该 uid,避免卸载仍可能被调度的权重。
     """
 
     lora_id: str = field(default_factory=lambda: uuid4().hex)
     lora_name: Optional[str] = None
     lora_path: Optional[str] = None
     pinned: bool = False
+
     # 每次构造LoRARef对象会执行
     def __post_init__(self) -> None:
         if not self.lora_id:
@@ -40,16 +41,16 @@ class LoRARef:
 
 
 class LoRARegistry:
-    """维护 name -> LoRARef，并通过引用计数跟踪进行中的请求.
+    """维护 name -> LoRARef,并通过引用计数跟踪进行中的请求.
 
-    数据流：HTTP 请求里 lora_path/name -> resolve_names/acquire 得到 lora_id 列表
+    数据流;HTTP 请求里 lora_path/name -> resolve_names/acquire 得到 lora_id 列表
     -> manager.prepare_lora_batch 用这些 uid 作为 pool 的 key。
     """
 
     def __init__(self, initial: Optional[List[LoRARef]] = None) -> None:
-        # lora_name -> LoRARef；OrderedDict 便于 LRU 把最近访问的 name 移到末尾。
+        # lora_name -> LoRARef;OrderedDict 便于 LRU 把最近访问的 name 移到末尾。
         self._registry: OrderedDict[str, LoRARef] = OrderedDict()
-        # lora_id -> 进行中的请求数（acquire 加一，release 减一）。
+        # lora_id -> 进行中的请求数(acquire 加一,release 减一)。
         self._counters: Dict[str, int] = {}
         if initial:
             for ref in initial:
@@ -92,7 +93,7 @@ class LoRARegistry:
     def resolve_names(
         self, lora_names: Union[str, List[Optional[str]], None]
     ) -> Union[Optional[str], List[Optional[str]]]:
-        """将请求里的 name（或 None=基座）解析为 lora_id（不修改引用计数）。"""
+        """将请求里的 name(或 None=基座)解析为 lora_id(不修改引用计数)。"""
         if lora_names is None:
             return None
         if isinstance(lora_names, str):
@@ -110,7 +111,7 @@ class LoRARegistry:
     def acquire(
         self, lora_names: Union[str, List[Optional[str]], None]
     ) -> Union[Optional[str], List[Optional[str]]]:
-        """解析 name 并增加非 None 的 lora_id 计数（表示该 adapter 正被某请求占用）。"""
+        """解析 name 并增加非 None 的 lora_id 计数(表示该 adapter 正被某请求占用)。"""
         ids = self.resolve_names(lora_names)
         if isinstance(ids, list):
             for lid in ids:
@@ -129,7 +130,7 @@ class LoRARegistry:
         self._counters[lora_id] = count - 1
 
     def touch(self, lora_name: str) -> LoRARef:
-        """LRU：访问时把 name 移到 OrderedDict 末尾."""
+        """LRU;访问时把 name 移到 OrderedDict 末尾."""
         ref = self.get_by_name(lora_name)
         self._registry.move_to_end(lora_name)
         return ref

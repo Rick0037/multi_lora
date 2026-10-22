@@ -56,7 +56,7 @@ def main():
         m = ToyLM()
         get_peft_model(m, cfg).save_pretrained(tmp / f"a{seed}")
 
-    # 加载双适配器 manager，后端先用 torch 便于与逐行参考对齐
+    # 加载双适配器 manager,后端先用 torch 便于与逐行参考对齐
     mgr = MultiLoRAManager.from_pretrained(
         ToyLM(),
         {"a": str(tmp / "a1"), "b": str(tmp / "a2")},
@@ -65,18 +65,18 @@ def main():
         lora_backend="torch",
     )
     id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
-    # 交替分配 a/b 适配器，模拟 heterogeneous batch
+    # 交替分配 a/b 适配器,模拟 heterogeneous batch
     lora_ids = [id_a if i % 2 == 0 else id_b for i in range(args.batch)]
     device = mgr.pool.device
     dtype = mgr.pool.dtype
     x = torch.randn(args.batch, 256, device=device, dtype=dtype)
 
     def run_full():
-        """整模型路径：manager 内部 batch prepare + 包装层 forward。"""
+        """整模型路径;manager 内部 batch prepare + 包装层 forward。"""
         return mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
 
     def run_row_loop():
-        """逐行参考：base linear + 每行单独 lora_delta。"""
+        """逐行参考;base linear + 每行单独 lora_delta。"""
         mgr.prepare_lora_batch(lora_ids)
         linear = mgr.lora_wrappers["lin"].base_layer
         yb = linear(x)
@@ -91,7 +91,7 @@ def main():
             acc[i : i + 1] = yb[i : i + 1] + lora_delta(x[i : i + 1], a, b, s, rank=r)
         return acc
 
-    # 预热，避免首次 kernel/编译开销影响计时
+    # 预热,避免首次 kernel/编译开销影响计时
     for _ in range(10):
         run_full()
         run_row_loop()
@@ -106,8 +106,10 @@ def main():
 
     b_ms = (t1 - t0) / args.iters * 1000
     r_ms = (t2 - t1) / args.iters * 1000
-    print(f"full_model {b_ms:.3f} ms/iter  row_loop {r_ms:.3f} ms/iter  speedup {r_ms/b_ms:.2f}x")
-    # 数值校验：两种路径输出应接近
+    print(
+        f"full_model {b_ms:.3f} ms/iter  row_loop {r_ms:.3f} ms/iter  speedup {r_ms/b_ms:.2f}x"
+    )
+    # 数值校验;两种路径输出应接近
     assert torch.allclose(run_full(), run_row_loop(), rtol=1e-3, atol=1e-3)
 
 

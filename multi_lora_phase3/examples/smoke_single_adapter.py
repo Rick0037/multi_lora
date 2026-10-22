@@ -39,7 +39,9 @@ DEFAULT_PROMPT = (
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
-    p.add_argument("--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)")
+    p.add_argument(
+        "--lora-1", default=DEFAULT_LORA_1, help="First LoRA (HF id or local path)"
+    )
     p.add_argument(
         "--lora-2",
         default=DEFAULT_LORA_2,
@@ -58,7 +60,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Offload part of the 7B model to CPU (for ~10GB free GPU).",
     )
-    p.add_argument("--gpu-id", type=int, default=1, help="GPU index when using --low-vram")
+    p.add_argument(
+        "--gpu-id", type=int, default=1, help="GPU index when using --low-vram"
+    )
     p.add_argument(
         "--device",
         choices=("auto", "cuda", "cpu"),

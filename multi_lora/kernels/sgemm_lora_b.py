@@ -1,4 +1,4 @@
-"""LoRA segment GEMM B 阶段 Triton kernel：mid @ B^T * scale，fused 累加到 output."""
+"""LoRA segment GEMM B 阶段 Triton kernel;mid @ B^T * scale,fused 累加到 output."""
 
 import torch
 import triton
@@ -30,7 +30,7 @@ def _sgemm_lora_b_kernel(
     BLOCK_K: tl.constexpr,
     scalings,
 ):
-    """Segment batched LoRA B GEMM，结果 scaled 后 in-place 加到 output（基座输出）."""
+    """Segment batched LoRA B GEMM,结果 scaled 后 in-place 加到 output(基座输出)."""
 
     batch_id = tl.program_id(axis=1)
     w_index = tl.load(weight_indices + batch_id)
@@ -93,9 +93,9 @@ def sgemm_lora_b_fwd(
     kernel_input_metadata: KernelInputMetaData,
     base_output: torch.Tensor = None,
 ) -> torch.Tensor:
-    """Host 入口：LoRA B segment SGEMM，可选 fused 累加到 base_output.
+    """Host 入口;LoRA B segment SGEMM,可选 fused 累加到 base_output.
 
-    x: (S, max_rank)；weights: (K, out_dim, max_rank)；output: (S, out_dim)。
+    x: (S, max_rank);weights: (K, out_dim, max_rank);output: (S, out_dim)。
     """
     assert x.is_contiguous()
     assert weights.is_contiguous()

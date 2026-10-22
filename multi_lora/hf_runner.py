@@ -1,4 +1,4 @@
-"""Hugging Face + PEFT 辅助：加载模型、选设备 dtype、简单 generate."""
+"""Hugging Face + PEFT 辅助;加载模型、选设备 dtype、简单 generate."""
 
 from __future__ import annotations
 
@@ -21,21 +21,21 @@ class ModelSpec:
 
 
 def pick_device() -> torch.device:
-    """优先 CUDA，否则 CPU."""
+    """优先 CUDA,否则 CPU."""
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
 
 
 def pick_dtype(device: torch.device) -> torch.dtype:
-    """GPU 上优先 bfloat16（若支持），否则 float16；CPU 用 float32."""
+    """GPU 上优先 bfloat16(若支持),否则 float16;CPU 用 float32."""
     if device.type == "cuda":
         return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     return torch.float32
 
 
 def load_tokenizer(model_id: str):
-    """加载 HF tokenizer，并确保 pad_token 存在."""
+    """加载 HF tokenizer,并确保 pad_token 存在."""
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -51,12 +51,12 @@ def load_causal_lm(
     low_vram: bool = False,
     gpu_id: int = 0,
 ) -> torch.nn.Module:
-    """加载 Causal LM，可选挂载单个 LoRA adapter."""
+    """加载 Causal LM,可选挂载单个 LoRA adapter."""
     device = device or pick_device()
     dtype = dtype or pick_dtype(device)
 
     if low_vram:
-        # 约 10GB 显存场景：部分层 offload 到 CPU
+        # 约 10GB 显存场景;部分层 offload 到 CPU
         max_memory = {gpu_id: "9GiB", "cpu": "64GiB"}
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
@@ -88,7 +88,7 @@ def load_causal_lm(
 
 
 def model_input_device(model: torch.nn.Module) -> torch.device:
-    """返回模型参数所在设备，用于把 input_ids 搬到同一 device."""
+    """返回模型参数所在设备,用于把 input_ids 搬到同一 device."""
     return next(model.parameters()).device
 
 

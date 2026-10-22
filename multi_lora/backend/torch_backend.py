@@ -1,4 +1,4 @@
-"""PyTorch 默认后端：按 segment / slot 分组 matmul（golden / CPU 回退）."""
+"""PyTorch 默认后端;按 segment / slot 分组 matmul(golden / CPU 回退)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from multi_lora.backend.base import LoRABackend
 
 
 class TorchLoRABackend(LoRABackend):
-    """朴素 PyTorch 实现：逐 segment 选 slot，便于单测与 Triton 数值对照."""
+    """朴素 PyTorch 实现;逐 segment 选 slot,便于单测与 Triton 数值对照."""
 
     name = "torch"
 
@@ -38,7 +38,7 @@ class TorchLoRABackend(LoRABackend):
             slot = int(bi.weight_indices[seg].item())
             r = int(bi.lora_ranks[slot].item())
             if r == 0:
-                continue  # 基座 slot：rank=0，无 LoRA 贡献
+                continue  # 基座 slot;rank=0,无 LoRA 贡献
             a = weights[slot, :r, :].to(dtype=x.dtype)
             y[start:end, :r] = x[start:end] @ a.T
         return y
@@ -49,7 +49,7 @@ class TorchLoRABackend(LoRABackend):
         weights: torch.Tensor,
         base_output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """对每个 segment 做 mid @ B^T * scaling，可选 fused 加到 base_output."""
+        """对每个 segment 做 mid @ B^T * scaling,可选 fused 加到 base_output."""
         if self.kernel_input_metadata is None:
             raise RuntimeError(
                 "kernel_input_metadata not set; call set_kernel_input_metadata first"

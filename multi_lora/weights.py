@@ -1,12 +1,12 @@
-"""从 PEFT 模型抽取 LoRA A/B 权重，供 CPU 缓存与 GPU pool 装载.
+"""从 PEFT 模型抽取 LoRA A/B 权重,供 CPU 缓存与 GPU pool 装载.
 
-第三步数据流：
-1. MultiLoRAManager.register_adapter 调用 extract_adapter_weights，把每个 PEFT adapter
-   名对应的全部 LoraLayer 的 A/B 张量拉到 CPU，存进 _weight_store[lora_id]。
-2. LoRAMemoryPool._load_uid_to_slot 从 weight_store 取 CPU 张量，按 max_lora_rank 做
-   padding 后 copy_ 到 GPU 槽位，供第四步 fused kernel 或当前 layers.lora_delta 使用。
+第三步数据流;
+1. MultiLoRAManager.register_adapter 调用 extract_adapter_weights,把每个 PEFT adapter
+   名对应的全部 LoraLayer 的 A/B 张量拉到 CPU,存进 _weight_store[lora_id]。
+2. LoRAMemoryPool._load_uid_to_slot 从 weight_store 取 CPU 张量,按 max_lora_rank 做
+   padding 后 copy_ 到 GPU 槽位,供第四步 fused kernel 或当前 layers.lora_delta 使用。
 
-注意：此处仅抽取各模块并按统一 rank 上界 padding，不做 qkv 等模块的权重合并。
+注意;此处仅抽取各模块并按统一 rank 上界 padding,不做 qkv 等模块的权重合并。
 """
 
 from __future__ import annotations
@@ -18,17 +18,17 @@ import torch
 from peft import PeftModel
 from peft.tuners.lora import LoraLayer
 
-# 本文件的作用是提取peft模型中的lora权重，并将其存储在AdapterWeights中
+# 本文件的作用是提取peft模型中的lora权重,并将其存储在AdapterWeights中
 
 ModuleWeights = Dict[str, Tuple[torch.Tensor, torch.Tensor]]
 
 
 @dataclass
 class AdapterWeights:
-    """单个 adapter 的全部 LoRA 权重（CPU）.
+    """单个 adapter 的全部 LoRA 权重(CPU).
 
-    modules：归一化后的模块路径 -> (lora_A, lora_B)。
-    A 形状 [r, in]，B 形状 [out, r]；与常见 LoRA 公式 delta = (x @ A.T) @ B.T * scaling 一致。
+    modules;归一化后的模块路径 -> (lora_A, lora_B)。
+    A 形状 [r, in],B 形状 [out, r];与常见 LoRA 公式 delta = (x @ A.T) @ B.T * scaling 一致。
     """
 
     rank: int
@@ -37,7 +37,7 @@ class AdapterWeights:
 
 
 def _module_key(name: str) -> str:
-    """归一化模块名，便于 pool 按 key 索引."""
+    """归一化模块名,便于 pool 按 key 索引."""
     for prefix in ("base_model.model.", "model."):
         if name.startswith(prefix):
             name = name[len(prefix) :]
@@ -45,11 +45,11 @@ def _module_key(name: str) -> str:
 
 
 def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeights:
-    """遍历 LoraLayer，抽取指定 adapter 的 lora_A / lora_B.
+    """遍历 LoraLayer,抽取指定 adapter 的 lora_A / lora_B.
 
-    必须先 set_adapter，否则 lora_A 字典里可能没有该 adapter 的键。
+    必须先 set_adapter,否则 lora_A 字典里可能没有该 adapter 的键。
     """
-    model.set_adapter(adapter_name) # 是PeftModel类下的一个函数
+    model.set_adapter(adapter_name)  # 是PeftModel类下的一个函数
     modules: ModuleWeights = {}
     rank: Optional[int] = None
     scaling: Optional[float] = None
@@ -63,10 +63,14 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         lora_b_layer = module.lora_B[adapter_name]
         a = lora_a_layer.weight.detach().cpu().clone()
         b = lora_b_layer.weight.detach().cpu().clone()
-        raw_r = module.r[adapter_name] if isinstance(getattr(module, "r", None), dict) else module.r
+        raw_r = (
+            module.r[adapter_name]
+            if isinstance(getattr(module, "r", None), dict)
+            else module.r
+        )
         fan_in = int(lora_a_layer.in_features)
         fan_out = int(lora_b_layer.out_features)
-        # nn.Linear 的 weight 为 [out_features, in_features]；标准 LoRA A: [r, fan_in]，B: [fan_out, r]。
+        # nn.Linear 的 weight 为 [out_features, in_features];标准 LoRA A: [r, fan_in],B: [fan_out, r]。
         if a.shape == (fan_in, raw_r):
             a = a.T
         if a.shape != (raw_r, fan_in):
@@ -84,7 +88,7 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         r = int(raw_r)
         if rank is None:
             rank = r
-            # scaling = alpha / r，与 HF PEFT 默认 LoRA 缩放一致。
+            # scaling = alpha / r,与 HF PEFT 默认 LoRA 缩放一致。
             alpha = getattr(module, "lora_alpha", r)
             if isinstance(alpha, dict):
                 alpha = alpha.get(adapter_name, r)

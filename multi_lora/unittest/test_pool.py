@@ -8,7 +8,7 @@ from multi_lora.weights import AdapterWeights
 
 
 def _fake_weights(rank: int = 4) -> AdapterWeights:
-    """构造随机 LoRA 权重占位，用于 pool 单元测试。"""
+    """构造随机 LoRA 权重占位,用于 pool 单元测试。"""
     a = torch.randn(rank, 8)
     b = torch.randn(16, rank)
     return AdapterWeights(rank=rank, scaling=0.5, modules={"layer": (a, b)})
@@ -36,21 +36,24 @@ def test_pool_eviction_lru():
         id_c: LoRARef(lora_id=id_c, lora_name="c"),
     }
 
-    # 第一批：占满 2 个槽位
+    # 第一批;占满 2 个槽位
     pool.prepare_lora_batch({id_a, id_b}, weight_store=store, lora_refs=refs)
     assert id_a in pool.uid_to_buffer_id and id_b in pool.uid_to_buffer_id
 
-    # 第二批：需要 c 与 None，应驱逐 a、b
+    # 第二批;需要 c 与 None,应驱逐 a、b
     pool.prepare_lora_batch({id_c, None}, weight_store=store, lora_refs=refs)
     assert pool.eviction_policy.eviction_count >= 1
     assert id_c in pool.uid_to_buffer_id
     assert None in pool.uid_to_buffer_id
-    # 仅 2 槽：加载 c 与 None 后，先前的 a、b 都应被驱逐
+    # 仅 2 槽;加载 c 与 None 后,先前的 a、b 都应被驱逐
     assert id_a not in pool.uid_to_buffer_id
     assert id_b not in pool.uid_to_buffer_id
 
     info = pool.build_batch_info([id_c, None])
-    assert info.weight_indices == [ # weight_indices 长度 = batch，第 i 行为第 i 条序列所用 uid 的 slot。
-        pool.get_buffer_id(id_c),
-        pool.get_buffer_id(None),
-    ]
+    assert (
+        info.weight_indices
+        == [  # weight_indices 长度 = batch,第 i 行为第 i 条序列所用 uid 的 slot。
+            pool.get_buffer_id(id_c),
+            pool.get_buffer_id(None),
+        ]
+    )

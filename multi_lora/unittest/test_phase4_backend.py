@@ -1,4 +1,4 @@
-"""第四步：整模型 LinearWithLoRA + 后端."""
+"""第四步;整模型 LinearWithLoRA + 后端."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from multi_lora.manager import MultiLoRAManager
 
 
 class ToyLM(nn.Module):
-    """测试用最小线性模型，单层 Linear 便于验证 LoRA 包装。"""
+    """测试用最小线性模型,单层 Linear 便于验证 LoRA 包装。"""
 
     def __init__(self):
         """初始化 Linear(16→32) 并带 bias。"""
@@ -26,7 +26,7 @@ class ToyLM(nn.Module):
 
 @pytest.fixture(scope="module")
 def tiny_linear_mgr(tmp_path_factory):
-    """构造带 a/b 两个 LoRA 适配器的 MultiLoRAManager（torch 后端）。"""
+    """构造带 a/b 两个 LoRA 适配器的 MultiLoRAManager(torch 后端)。"""
     tmp = tmp_path_factory.mktemp("p4_linear")
     cfg = LoraConfig(
         r=4,
@@ -52,7 +52,7 @@ def tiny_linear_mgr(tmp_path_factory):
 
 
 def _ref_rowwise(mgr, x, lora_ids):
-    """逐行参考：base linear + 每行单独 lora_delta，用于数值对比。"""
+    """逐行参考;base linear + 每行单独 lora_delta,用于数值对比。"""
     mgr.prepare_lora_batch(lora_ids)
     linear = mgr.lora_wrappers["lin"].base_layer
     yb = linear(x)
@@ -71,7 +71,9 @@ def _ref_rowwise(mgr, x, lora_ids):
 def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
     """整模型 forward_with_triton_lora 输出应与逐行参考一致。"""
     mgr = tiny_linear_mgr
-    x = torch.randn(3, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype)
+    x = torch.randn(
+        3, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
+    )
     id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
     lora_ids = [id_a, None, id_b]
 
@@ -87,17 +89,19 @@ def test_kernel_input_metadata_tensor_shapes(tiny_linear_mgr):
     meta, _ = mgr.build_kernel_input_metadata([id_a, None])
     assert meta.weight_indices.shape == (2,)
     assert meta.lora_ranks.shape[0] == mgr.max_loras_per_batch
-    # 两行各一段：indptr = [0, 1, 2]
+    # 两行各一段;indptr = [0, 1, 2]
     assert meta.seg_indptr.tolist() == [0, 1, 2]
 
 
 def test_decode_repeated_forward(tiny_linear_mgr):
-    """模拟 decode：每步 [B, in]，batch 级 prepare 可重复调用。"""
+    """模拟 decode;每步 [B, in],batch 级 prepare 可重复调用。"""
     mgr = tiny_linear_mgr
-    x = torch.randn(2, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype)
+    x = torch.randn(
+        2, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
+    )
     id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
     lora_ids = [id_a, id_b]
     y1 = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
-    # 相同输入与 lora_ids 重复 forward，结果应稳定
+    # 相同输入与 lora_ids 重复 forward,结果应稳定
     y2 = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
     assert torch.allclose(y1, y2)

@@ -67,7 +67,7 @@ def test_grouped_matches_rowwise(tiny_peft_two_adapters):
     base = GPT2LMHeadModel.from_pretrained("sshleifer/tiny-gpt2")
     model = load_peft_multi_adapter(
         base,
-        {"a": str(root / "a"), "b": str(root / "b")}, # adapter mapping
+        {"a": str(root / "a"), "b": str(root / "b")},  # adapter mapping
         first="a",
     )
     model.eval()
@@ -80,7 +80,7 @@ def test_grouped_matches_rowwise(tiny_peft_two_adapters):
     )
     input_ids = enc["input_ids"]
     attention_mask = enc["attention_mask"]
-    lora_ids = ["a", None, "b", "a"] # lora name, 好像_peft_name_to_id为真正的id
+    lora_ids = ["a", None, "b", "a"]  # lora name, 好像_peft_name_to_id为真正的id
 
     g = forward_logits_grouped(
         model,

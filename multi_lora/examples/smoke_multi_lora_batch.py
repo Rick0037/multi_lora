@@ -34,7 +34,7 @@ ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
 
 
 def parse_args():
-    """解析命令行：模型/适配器路径、每行 LoRA 分配与设备选项。"""
+    """解析命令行;模型/适配器路径、每行 LoRA 分配与设备选项。"""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-model", default=DEFAULT_BASE)
     p.add_argument("--adapter-a", default=ADAPTER_A)
@@ -56,7 +56,7 @@ def parse_args():
 
 
 def main() -> int:
-    """Phase-2 冒烟：同一 batch 内每行不同 LoRA，对比 grouped 与 row-wise logits。"""
+    """Phase-2 冒烟;同一 batch 内每行不同 LoRA,对比 grouped 与 row-wise logits。"""
     args = parse_args()
     names = [x.strip() for x in args.names.split(",") if x.strip()]
     if len(names) != 2:
@@ -73,8 +73,10 @@ def main() -> int:
 
     raw_ids = [x.strip() for x in args.lora_ids.split(",")]
     if len(raw_ids) != len(texts):
-        raise SystemExit("--lora-ids must have one entry per prompt (use empty for base)")
-    # 空字符串映射为 base（None）
+        raise SystemExit(
+            "--lora-ids must have one entry per prompt (use empty for base)"
+        )
+    # 空字符串映射为 base(None)
     lora_ids: list[str | None] = [x if x else None for x in raw_ids]
 
     if args.device == "cpu":
@@ -100,11 +102,11 @@ def main() -> int:
     input_ids = input_ids.to(model_input_device(model))
     attention_mask = attention_mask.to(model_input_device(model))
 
-    # grouped：一次 forward，内部按 LoRA 分组
+    # grouped;一次 forward,内部按 LoRA 分组
     g = forward_logits_grouped(
         model, input_ids=input_ids, attention_mask=attention_mask, lora_ids=lora_ids
     )
-    # row-wise：逐行切换 adapter 的参考实现
+    # row-wise;逐行切换 adapter 的参考实现
     r = forward_logits_rowwise_reference(
         model, input_ids=input_ids, attention_mask=attention_mask, lora_ids=lora_ids
     )

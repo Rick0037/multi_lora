@@ -71,7 +71,9 @@ def main() -> int:
 
     raw_ids = [x.strip() for x in args.lora_ids.split(",")]
     if len(raw_ids) != len(texts):
-        raise SystemExit("--lora-ids must have one entry per prompt (use empty for base)")
+        raise SystemExit(
+            "--lora-ids must have one entry per prompt (use empty for base)"
+        )
     lora_ids: list[str | None] = [x if x else None for x in raw_ids]
 
     if args.device == "cpu":

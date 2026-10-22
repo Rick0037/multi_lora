@@ -1,9 +1,7 @@
-"""基于池内 A/B 权重的朴素 LoRA delta（PyTorch matmul）.
+"""基于池内 A/B 权重的朴素 LoRA delta(PyTorch matmul).
 
-用于验证 GPU 槽位中的权重与 scaling；第四步可由 Triton segment GEMM 替代。
+用于验证 GPU 槽位中的权重与 scaling;第四步可由 Triton segment GEMM 替代。
 """
-
-
 
 from __future__ import annotations
 
@@ -19,9 +17,9 @@ def lora_delta(
     *,
     rank: int,
 ) -> torch.Tensor:
-    """计算 LoRA 对线性层的增量：delta(x) = scaling * (x @ A.T) @ B.T.
+    """计算 LoRA 对线性层的增量;delta(x) = scaling * (x @ A.T) @ B.T.
 
-    x: [*, in]; lora_a: [max_rank, in] 仅前 rank 行有效；lora_b: [out, max_rank] 仅前 rank 列有效。
+    x: [*, in]; lora_a: [max_rank, in] 仅前 rank 行有效;lora_b: [out, max_rank] 仅前 rank 列有效。
     """
     a = lora_a[:rank]
     b = lora_b[:, :rank]
@@ -38,5 +36,5 @@ def forward_linear_with_pool_lora(
     scaling: float,
     rank: int,
 ) -> torch.Tensor:
-    """基座 Linear 输出 + 从 pool 槽位读出的 LoRA delta（单模块、单 adapter 槽）。"""
+    """基座 Linear 输出 + 从 pool 槽位读出的 LoRA delta(单模块、单 adapter 槽)。"""
     return base(x) + lora_delta(x, lora_a, lora_b, scaling, rank=rank)
