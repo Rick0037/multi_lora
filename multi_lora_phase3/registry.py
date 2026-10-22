@@ -13,6 +13,8 @@ from dataclasses import dataclass, field, fields
 from typing import Dict, List, Optional, Union
 from uuid import uuid4
 
+# * lora 元数据封装 & 以及注册与管理
+
 
 @dataclass(frozen=True)
 class LoRARef:
@@ -21,6 +23,7 @@ class LoRARef:
     pinned=True 时池驱逐会跳过该 uid,避免卸载仍可能被调度的权重。
     """
 
+    # * 创建的时候同时生成了一个uuid
     lora_id: str = field(default_factory=lambda: uuid4().hex)
     lora_name: Optional[str] = None
     lora_path: Optional[str] = None
@@ -49,6 +52,7 @@ class LoRARegistry:
 
     def __init__(self, initial: Optional[List[LoRARef]] = None) -> None:
         # lora_name -> LoRARef;OrderedDict 便于 LRU 把最近访问的 name 移到末尾。
+        # * value 是返回原来的数据
         self._registry: OrderedDict[str, LoRARef] = OrderedDict()
         # lora_id -> 进行中的请求数(acquire 加一,release 减一)。
         self._counters: Dict[str, int] = {}
@@ -62,8 +66,11 @@ class LoRARegistry:
         if lora_ref.lora_name in self._registry:
             raise ValueError(f"LoRA name already registered: {lora_ref.lora_name}")
         self._registry[lora_ref.lora_name] = lora_ref
+        #! 如果不存在的时候就返回0
+        # * 比如 key not in self._countres.keys() return 0
         self._counters.setdefault(lora_ref.lora_id, 0)
 
+    # no used
     def unregister(self, lora_name: str) -> str:
         ref = self._registry.get(lora_name)
         if ref is None:

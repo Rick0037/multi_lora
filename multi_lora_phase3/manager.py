@@ -103,10 +103,15 @@ class MultiLoRAManager:
         self.registry.register(ref)
         weights = extract_adapter_weights(self.model, peft_adapter_name)
         self._weight_store[ref.lora_id] = weights
+
         self._id_to_peft_name[ref.lora_id] = peft_adapter_name
         self._peft_name_to_id[peft_adapter_name] = ref.lora_id
         # 运行池分配的 max_lora_rank 至少覆盖已注册 adapter 的最大 rank。
+        #! 除了数值对了剩下没用
         self.max_lora_rank = max(self.max_lora_rank, weights.rank)
+        # 基座 slot;无真实 LoRA 张量;pool 仍可为 None 分配 buffer_id,便于 per-row weight_indices 统一语义。
+        if None not in self._weight_store:
+            self._weight_store[None] = AdapterWeights(rank=0, scaling=0.0, modules={})
 
     def validate_lora_batch(
         self,
@@ -127,10 +132,12 @@ class MultiLoRAManager:
             ref = self.registry.get_by_id(uid)
             pinned_in_batch += int(ref.pinned)
         # 非 pinned 槽位数量须能容纳本 batch 中的 distinct adapter
+        # 逻辑关系应该是：`pinned_in_batch <= num_pinned_in_pool`(请求要用的 pinned，必然已经在池里)
         required = len(set(lora_ids)) - pinned_in_batch
         vacancy = self.max_loras_per_batch - num_pinned_in_pool
         return required <= vacancy
 
+    #
     def prepare_lora_batch(self, lora_ids: Sequence[LoraKey]) -> BatchLoRAInfo:
         """把本 batch 涉及的 uid 装入 GPU pool,返回 per-row slot 元数据.
 
@@ -143,17 +150,26 @@ class MultiLoRAManager:
             )
 
         cur_uids: Set[Uid] = set(lora_ids)
-        # 基座 slot;无真实 LoRA 张量;pool 仍可为 None 分配 buffer_id,便于 per-row weight_indices 统一语义。
-        if None not in self._weight_store:
-            self._weight_store[None] = AdapterWeights(rank=0, scaling=0.0, modules={})
 
         # lora_id -> LoRARef;供 pool 判断 pinned,不参与权重拷贝。
+        # * key lora_id : value, ref struct
         refs = {ref.lora_id: ref for ref in self.registry.all_refs()}
+        # """
+        # {'7b1e54eed2ef4be79b3e3df806240b60': LoRARef(lora_id='7b1e54eed2ef4be79b3e3df806240b60',
+        # lora_name='a', lora_path='GestaltLabs/Jeff-1', pinned=False),
+        # 'e39711325e5b4cd881b319941fadcbd4': LoRARef(lora_id='e39711325e5b4cd881b319941fadcbd4',
+        # lora_name='b', lora_path='/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint',
+        #  pinned=False)}
+        # """
+        # * 准备load lora 权重
         self.pool.prepare_lora_batch(
-            cur_uids,
-            weight_store=self._weight_store,
-            lora_refs=refs,
+            cur_uids,  # * 当前的请求的uids
+            weight_store=self._weight_store,  # * cpu上面的权重
+            lora_refs=refs,  # * 所有lora中的元数据
         )
+        # * 创建batch info
+        # * 本次输入 -> ['a', None], 输出的返回数值 ->
+        # * BatchLoRAInfo(weight_indices=[0, 1], lora_ranks=[16, 0], scalings=[2.0, 0.0], evictions=0)
         return self.pool.build_batch_info(list(lora_ids))
 
     def peft_name_for_row(self, lora_id: LoraKey) -> LoraKey:
@@ -181,6 +197,8 @@ class MultiLoRAManager:
         batch_info = self.prepare_lora_batch(lora_ids)
         # 将每行的内部 lora_id 转回 PEFT adapter 名;None 保持为基座路径。
         peft_keys = [self.peft_name_for_row(uid) for uid in lora_ids]
+
+        # * 上面只是拿回了batch info, 实际这个3 加载还是group的加载
         logits = forward_logits_grouped(
             self.model,
             input_ids=input_ids,

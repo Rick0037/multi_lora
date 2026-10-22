@@ -20,6 +20,7 @@ from peft.tuners.lora import LoraLayer
 
 # 本文件的作用是提取peft模型中的lora权重,并将其存储在AdapterWeights中
 
+# * key -> name, value -> [weight_a, weight_b]
 ModuleWeights = Dict[str, Tuple[torch.Tensor, torch.Tensor]]
 
 
@@ -50,9 +51,10 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
     必须先 set_adapter,否则 lora_A 字典里可能没有该 adapter 的键。
     """
     model.set_adapter(adapter_name)  # 是PeftModel类下的一个函数
+    # * adapter_name:"a"
     modules: ModuleWeights = {}
     rank: Optional[int] = None
-    scaling: Optional[float] = None
+    scaling: Optional[float] = None  # * alpha / rank
 
     for full_name, module in model.named_modules():
         if not isinstance(module, LoraLayer):
@@ -61,15 +63,23 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
             continue
         lora_a_layer = module.lora_A[adapter_name]
         lora_b_layer = module.lora_B[adapter_name]
+        """
+        (Pdb) lora_a_layer
+        Linear(in_features=2560, out_features=16, bias=False)
+        (Pdb) lora_b_layer
+        Linear(in_features=16, out_features=4096, bias=False)
+        """
         a = lora_a_layer.weight.detach().cpu().clone()
         b = lora_b_layer.weight.detach().cpu().clone()
+        # * rank
+
         raw_r = (
             module.r[adapter_name]
             if isinstance(getattr(module, "r", None), dict)
             else module.r
         )
-        fan_in = int(lora_a_layer.in_features)
-        fan_out = int(lora_b_layer.out_features)
+        fan_in = int(lora_a_layer.in_features)  # * 2560 * 16,
+        fan_out = int(lora_b_layer.out_features)  # * 16 * 4096
         # nn.Linear 的 weight 为 [out_features, in_features];标准 LoRA A: [r, fan_in],B: [fan_out, r]。
         if a.shape == (fan_in, raw_r):
             a = a.T
@@ -84,6 +94,7 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
                 f"lora_B shape {tuple(b.shape)} != ({fan_out}, {raw_r}) after normalize for {full_name}"
             )
         key = _module_key(full_name)
+        # * 'layers.0.self_attn.q_proj'
         modules[key] = (a, b)
         r = int(raw_r)
         if rank is None:

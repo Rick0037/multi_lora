@@ -28,9 +28,16 @@ from multi_lora_phase3.hf_runner import (  # noqa: E402
     release_model,
 )
 
-DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
+# ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
+# ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+
+
+DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
+# rank 16 只训练了qkvo
+ADAPTER_A = "GestaltLabs/Jeff-1"
+# rank 64 qkvo 以及 mlp 部分
+ADAPTER_B = "/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint"
 
 
 def parse_args():

@@ -23,9 +23,15 @@ from multi_lora_phase3.hf_runner import (
 )
 from multi_lora_phase3.manager import MultiLoRAManager
 
-DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
+# ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
+# ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
+
+DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
+# rank 16 只训练了qkvo
+ADAPTER_A = "GestaltLabs/Jeff-1"
+# rank 64 qkvo 以及 mlp 部分
+ADAPTER_B = "/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint"
 
 
 def main() -> int:
@@ -59,9 +65,11 @@ def main() -> int:
         max_loras_per_batch=2,
         max_lora_rank=64,
     )
+    # * id_a = uuid construct input
     id_a = mgr._peft_name_to_id["a"]
     lora_ids = [id_a, None]
 
+    # * only move to cuda
     enc = {k: v.to(next(mgr.model.parameters()).device) for k, v in enc.items()}
     grouped, info = mgr.forward_logits_grouped(
         input_ids=enc["input_ids"],
