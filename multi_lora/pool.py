@@ -51,14 +51,16 @@ class LoRAMemoryPool:
         eviction_policy: str = "lru",
     ) -> None:
         """预分配槽位映射表;各 module 的 A/B buffer 在 finalize_buffers 时按需创建."""
+        # K: 同时驻留 GPU 的不同 adapter（含基座槽位）的个数上界。
         self.max_loras_per_batch = max_loras_per_batch
         self.max_lora_rank = max_lora_rank
         self.device = device
         self.dtype = dtype
         self.eviction_policy: EvictionPolicy = get_eviction_policy(eviction_policy)
 
-        # uid ↔ slot 双向映射
+        # uid ↔ slot 双向映射;None（基座）也可占用一个槽位。
         self.uid_to_buffer_id: Dict[Uid, int] = {}
+        # 列表下标就是 slot_id;Union 表示槽内绑定的是 uid 或 EMPTY_SLOT 空闲标记。
         self.buffer_id_to_uid: List[Union[Uid, _EmptySlot]] = [
             EMPTY_SLOT
         ] * max_loras_per_batch
@@ -66,6 +68,7 @@ class LoRAMemoryPool:
         self._slot_meta: Dict[int, Tuple[int, float]] = {}
 
         # module_key -> [K, max_rank, in] / [K, out, max_rank]
+        # key 例如 'layers.0.self_attn.q_proj';同一 key 的 A/B 按槽位维堆叠。
         self.A_buffers: Dict[str, torch.Tensor] = {}
         self.B_buffers: Dict[str, torch.Tensor] = {}
 
@@ -128,12 +131,16 @@ class LoRAMemoryPool:
 
     def prepare_lora_batch(
         self,
-        cur_uids: Set[Uid],
+        cur_uids: Set[Uid],  # 当前批次需要的所有 uid，包含 None（基座）
         *,
-        weight_store: Dict[Uid, AdapterWeights],
-        lora_refs: Dict[str, LoRARef],
+        weight_store: Dict[Uid, AdapterWeights],  # 已加载的 CPU 权重集合
+        lora_refs: Dict[str, LoRARef],  # adapter 元数据，用于判断是否 pinned
     ) -> None:
-        """确保 cur_uids 中每个 uid 都有 GPU 槽位;必要时驱逐旧 adapter."""
+        """确保 cur_uids 中每个 uid 都有 GPU 槽位;必要时驱逐旧 adapter.
+
+        先对所有 cur_uids mark_used(更新 LRU/FIFO),再逐个确保 resident;
+        这样本 batch 仍要用的 uid 不会在选 victim 时进入 candidates。
+        """
         self.finalize_buffers(weight_store)
 
         # 本 batch 用到的 uid 标记为最近使用,供 LRU 驱逐
@@ -200,6 +207,7 @@ class LoRAMemoryPool:
         # 优先驱逐 LoRA 槽;仅在无其它候选时驱逐基座槽(None)
         non_none = candidates - {None}
         victim = self.eviction_policy.select_victim(non_none or candidates)
+        # 一次只回收一个 victim;还有未驻留 uid 时由外层循环再次调用
         # 回收 victim 的映射,返回其 slot 号复用
         victim_slot = self.uid_to_buffer_id.pop(victim)  # type: ignore[arg-type]
         self.eviction_policy.remove(victim)  # type: ignore[arg-type]
@@ -232,6 +240,7 @@ class LoRAMemoryPool:
             b_gpu = self.B_buffers[key][buffer_id]
             a_gpu.zero_()
             b_gpu.zero_()
+            # 槽内 A 为 [max_rank, in],B 为 [out, max_rank]
             # 只拷贝有效 rank 区域,其余 padding 保持 0
             a_gpu[: aw.rank].copy_(a_cpu.to(dtype=self.dtype))
             b_gpu[:, : aw.rank].copy_(b_cpu.to(dtype=self.dtype))

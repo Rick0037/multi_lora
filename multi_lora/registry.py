@@ -18,16 +18,18 @@ from uuid import uuid4
 class LoRARef:
     """适配器元数据;稳定 lora_id、可读 lora_name / lora_path。
 
+    默认 lora_id 是随机生成的 UUID 字符串,不再直接等同于 lora_name。
     pinned=True 时池驱逐会跳过该 uid,避免卸载仍可能被调度的权重。
     """
 
+    # 未显式传入 lora_id 时,每次构造都会调用 default_factory 生成 UUID。
     lora_id: str = field(default_factory=lambda: uuid4().hex)
     lora_name: Optional[str] = None
     lora_path: Optional[str] = None
     pinned: bool = False
 
     def __post_init__(self) -> None:
-        """校验 lora_id 非空."""
+        """每次构造 LoRARef 后执行,校验 lora_id 非空."""
         if not self.lora_id:
             raise ValueError("lora_id cannot be empty")
 
@@ -42,15 +44,18 @@ class LoRARef:
 
 
 class LoRARegistry:
-    """维护 name -> LoRARef,并通过引用计数跟踪进行中的请求.
+    """维护 name -> LoRARef,供调用方查询元数据,并通过引用计数跟踪进行中的请求.
 
-    数据流;HTTP 请求里 lora_path/name -> resolve_names/acquire 得到 lora_id 列表
-    -> manager.prepare_lora_batch 用这些 uid 作为 pool 的 key。
+    数据流;
+    1. 请求传入可读的 lora_name。
+    2. resolve_names/acquire 将名称解析为 lora_id 列表。
+    3. manager.prepare_lora_batch 用这些 uid 作为 pool 的 key。
     """
 
     def __init__(self, initial: Optional[List[LoRARef]] = None) -> None:
         """可选传入初始 LoRARef 列表并完成 register."""
         # lora_name -> LoRARef;OrderedDict 便于 LRU 把最近访问的 name 移到末尾。
+        # value 保存原来的 LoRARef 对象;OrderedDict 默认按插入顺序迭代。
         self._registry: OrderedDict[str, LoRARef] = OrderedDict()
         # lora_id -> 进行中的请求数(acquire 加一,release 减一)。
         self._counters: Dict[str, int] = {}
@@ -65,8 +70,10 @@ class LoRARegistry:
         if lora_ref.lora_name in self._registry:
             raise ValueError(f"LoRA name already registered: {lora_ref.lora_name}")
         self._registry[lora_ref.lora_name] = lora_ref
+        # setdefault 仅在 key 不存在时插入 0,已有计数不会被清零。
         self._counters.setdefault(lora_ref.lora_id, 0)
 
+    # 仅测试使用
     def unregister(self, lora_name: str) -> str:
         """注销 adapter;若有进行中的 acquire 则拒绝."""
         ref = self._registry.get(lora_name)
@@ -99,7 +106,10 @@ class LoRARegistry:
     def resolve_names(
         self, lora_names: Union[str, List[Optional[str]], None]
     ) -> Union[Optional[str], List[Optional[str]]]:
-        """将请求里的 name(或 None=基座)解析为 lora_id(不修改引用计数)。"""
+        """将请求里的 name(或 None=基座)解析为 lora_id(不修改引用计数).
+
+        输入输出形状保持一致:单值进单值出,列表进列表出(逐位保留 None)。
+        """
         if lora_names is None:
             return None
         if isinstance(lora_names, str):

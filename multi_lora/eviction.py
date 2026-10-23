@@ -35,7 +35,7 @@ class LRUEvictionPolicy(EvictionPolicy):
         self.eviction_count = 0
 
     def mark_used(self, uid: Optional[str]) -> None:
-        # None(基座)不进入 LRU 链
+        # None(基座)不进入 LRU 链;基座槽没有可重载的 LoRA 权重,不参与"谁值得留在显存"的排序
         if uid is not None:
             self.access_order.pop(uid, None)
             self.access_order[uid] = None
@@ -46,6 +46,7 @@ class LRUEvictionPolicy(EvictionPolicy):
             if uid in candidates:
                 self.eviction_count += 1
                 return uid
+        # LRU 链里扫不到候选时,只可能是仅剩基座槽可驱逐(None 不入链),此时兜底返回 None
         if None in candidates:
             self.eviction_count += 1
             return None

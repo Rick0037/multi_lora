@@ -20,6 +20,7 @@ from peft.tuners.lora import LoraLayer
 
 # 本文件的作用是提取peft模型中的lora权重,并将其存储在AdapterWeights中
 
+# key 例如 'layers.0.self_attn.q_proj';value -> (lora_A, lora_B),均为 CPU 张量
 ModuleWeights = Dict[str, Tuple[torch.Tensor, torch.Tensor]]
 
 
@@ -52,7 +53,7 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
     model.set_adapter(adapter_name)  # 是PeftModel类下的一个函数
     modules: ModuleWeights = {}
     rank: Optional[int] = None
-    scaling: Optional[float] = None
+    scaling: Optional[float] = None  # alpha / rank
 
     for full_name, module in model.named_modules():
         if not isinstance(module, LoraLayer):

@@ -66,8 +66,9 @@ class MultiLoRAManager:
             eviction_policy=eviction_policy,
         )
 
-        # lora_id -> CPU 权重;None key 为基座占位
+        # lora_id -> CPU 权重;None key 为基座占位;这是 pool H2D 拷贝的源
         self._weight_store: Dict[Optional[str], AdapterWeights] = {}
+        # lora_id <-> PEFT adapter 名;batching 层仍用 str adapter 名调用 set_adapter
         self._id_to_peft_name: Dict[str, str] = {}
         self._peft_name_to_id: Dict[str, str] = {}
 
@@ -122,6 +123,7 @@ class MultiLoRAManager:
         self._weight_store[ref.lora_id] = weights
         self._id_to_peft_name[ref.lora_id] = peft_adapter_name
         self._peft_name_to_id[peft_adapter_name] = ref.lora_id
+        # 运行池分配的 max_lora_rank 至少覆盖已注册 adapter 的最大 rank
         self.max_lora_rank = max(self.max_lora_rank, weights.rank)
         self.pool.finalize_buffers(self._weight_store)
 
@@ -158,6 +160,7 @@ class MultiLoRAManager:
         num_pinned_in_pool: int = 0,
     ) -> bool:
         """校验 distinct adapter 数与 pinned 槽位是否允许本 batch 准入."""
+        # distinct 表示不同的 lora adapter;pinned 可以理解为钉子户,这一部分永不驱逐
         if not validate_lora_batch(
             lora_ids, max_loras_per_batch=self.max_loras_per_batch
         ):
@@ -168,6 +171,8 @@ class MultiLoRAManager:
                 continue
             ref = self.registry.get_by_id(uid)
             pinned_in_batch += int(ref.pinned)
+        # 非 pinned 槽位数量须能容纳本 batch 中的 distinct adapter;
+        # 前提是请求要用的 pinned 必然已经在池里,即 pinned_in_batch <= num_pinned_in_pool
         required = len(set(lora_ids)) - pinned_in_batch
         vacancy = self.max_loras_per_batch - num_pinned_in_pool
         return required <= vacancy
@@ -185,12 +190,15 @@ class MultiLoRAManager:
         if None not in self._weight_store:
             self._weight_store[None] = AdapterWeights(rank=0, scaling=0.0, modules={})
 
+        # lora_id -> LoRARef;供 pool 判断 pinned,不参与权重拷贝
         refs = {ref.lora_id: ref for ref in self.registry.all_refs()}
+        # 把本 batch 需要的权重装进 GPU 槽位;槽满时由 pool 驱逐旧 adapter
         self.pool.prepare_lora_batch(
-            cur_uids,
-            weight_store=self._weight_store,
-            lora_refs=refs,
+            cur_uids,  # 当前请求的 uid 集合,含 None(基座)
+            weight_store=self._weight_store,  # CPU 上的全部 adapter 权重
+            lora_refs=refs,  # 全部 adapter 的元数据
         )
+        # 为 batch 内每一行给出 weight_indices,以及各槽的 lora_ranks / scalings
         return self.pool.build_batch_info(list(lora_ids))
 
     def build_kernel_input_metadata(
