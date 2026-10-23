@@ -23,9 +23,6 @@ from multi_lora_phase3.hf_runner import (
 )
 from multi_lora_phase3.manager import MultiLoRAManager
 
-# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
 
 DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
 # rank 16 只训练了qkvo
@@ -76,6 +73,8 @@ def main() -> int:
         attention_mask=enc["attention_mask"],
         lora_ids=lora_ids,
     )
+    # * BatchLoRAInfo(weight_indices=[1, 0], lora_ranks=[0, 16], scalings=[0.0, 2.0], evictions=0)
+
     peft_keys = [mgr.peft_name_for_row(x) for x in lora_ids]
     ref = forward_logits_rowwise_reference(
         mgr.model,
@@ -87,6 +86,8 @@ def main() -> int:
     print(f"weight_indices={info.weight_indices} evictions={info.evictions} close={ok}")
 
     id_b = mgr._peft_name_to_id["b"]
+    # * 中间 驱逐了两次
+    # * {"a", "none"} -> {"a", "b"} -> {"a", "none"}
     mgr.prepare_lora_batch([id_a, id_b])
     mgr.prepare_lora_batch([id_a, None])
     print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")

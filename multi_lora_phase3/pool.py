@@ -34,6 +34,8 @@ EMPTY_SLOT = _EmptySlot()
 Uid = Optional[str]
 # 单个槽内的数据;{模块 key : (A_gpu, B_gpu)};A 为 [max_rank, in],B 为 [out, max_rank],有效 rank 用 meta 记录。
 SlotTensors = Dict[str, Tuple[torch.Tensor, torch.Tensor]]
+# * str = "layer_0.self_attn.q_proj"
+# * Tuple[torch.Tensor, torch.Tensor] -> a_weight, b_weight
 
 
 @dataclass
@@ -72,9 +74,11 @@ class LoRAMemoryPool:
         # uid -> 槽位下标;None(基座)也可占用一个槽位。
         self.uid_to_buffer_id: Dict[Uid, int] = {}
         # 列表为当前绑定的 uid,即槽位index为i的槽位绑定的uid,如果i槽位没有任何lora,则为EMPTY_SLOT 表示该槽空闲可分配。
+        # * Union[X, Y] 表示类型是`X` 或`Y` 要不是empty 要不是uid
         self.buffer_id_to_uid: List[Union[Uid, _EmptySlot]] = [
             EMPTY_SLOT
         ] * max_loras_per_batch
+        #! buffer 都指的是这个
         # slot_id -> module_key -> (A_gpu, B_gpu)
         self._slot_tensors: Dict[int, SlotTensors] = {}
         # rank, scaling
@@ -92,24 +96,27 @@ class LoRAMemoryPool:
 
     def prepare_lora_batch(
         self,
-        cur_uids: Set[Uid],
+        cur_uids: Set[Uid],  # * 当前批次的所有uid
         *,
-        weight_store: Dict[Uid, AdapterWeights],
-        lora_refs: Dict[str, LoRARef],
+        weight_store: Dict[Uid, AdapterWeights],  # * 之前所有的weight
+        lora_refs: Dict[str, LoRARef],  # * 之前的info
     ) -> None:
         """确保 cur_uids 中每个 uid 都在 GPU 槽位中,如不在则分配slot;必要时驱逐并 H2D 拷贝.
 
         调用顺序;先对所有 cur_uids mark_used(更新 LRU/FIFO),再逐个确保 resident;
         这样本 batch 仍要用的 uid 不会在选 victim 时进入 candidates。
         """
+        # * 实际上是在lru 里面去更新一个标志位
         for uid in cur_uids:
             self.eviction_policy.mark_used(uid)
 
+        # * 就是一个数据统计
         evictions_before = self.eviction_policy.eviction_count
-
+        # * 这里是直接传出来的包括none {None, '3b27455aebac4567bbd9b15b3341896e'}
         for uid in cur_uids:
+            # * 已在 GPU,无需再次 H2D, 外层
             if uid in self.uid_to_buffer_id:
-                continue  # 已在 GPU,无需再次 H2D
+                continue
             # 为当前请求需要的所有lora id分配buffer
             buffer_id = self._alloc_slot(cur_uids, lora_refs)
             # 为当前请求需要的所有lora id对应的lora weight加载到上述gpu buffer
@@ -150,9 +157,10 @@ class LoRAMemoryPool:
 
         # 2) 无空槽;构造可驱逐候选 ;已占用slot但却不在本 batch、且非 pinned的lora id buffer。
         candidates: Set[Uid] = set()
+        # * 找出不用的gpu, NONE 也包括
         for i in range(self.max_loras_per_batch):
             uid = self.buffer_id_to_uid[i]
-            # 该lora id被当前某个请求选中
+            # * 该lora id被当前某个请求选中
             if uid == EMPTY_SLOT or uid in cur_uids:
                 continue
             # 该lora id未被当前某个请求选中,则写入驱逐列表
@@ -169,8 +177,13 @@ class LoRAMemoryPool:
         # 驱逐逻辑,见eviction.py
         # 优先驱逐 LoRA 槽;仅在无其它候选时驱逐基座槽(None)。
         non_none = candidates - {None}
-        victim = self.eviction_policy.select_victim(non_none or candidates)
+        if non_none:
+            victim = self.eviction_policy.select_victim(non_none)
+        else:
+            victim = self.eviction_policy.select_victim(candidates)
+
         # 回收 被驱逐slot: victim 的映射与 GPU 张量;返回该slot 号复用。
+        # * 只选择出了一个victim_slot
         victim_slot = self.uid_to_buffer_id.pop(victim)  # type: ignore[arg-type]
         self.eviction_policy.remove(victim)  # type: ignore[arg-type]
         self.buffer_id_to_uid[victim_slot] = EMPTY_SLOT
@@ -195,28 +208,31 @@ class LoRAMemoryPool:
 
         if uid not in weight_store:
             raise KeyError(f"adapter weights not in store: {uid}")
+        # * 取出当前的weight
         aw = weight_store[uid]
         if aw.rank > self.max_lora_rank:
             raise ValueError(f"rank {aw.rank} > max_lora_rank {self.max_lora_rank}")
 
         slot: SlotTensors = {}
         for key, (a_cpu, b_cpu) in aw.modules.items():
-            # 预分配最大 rank 大小的 GPU buffer,下面只填前 aw.rank 行/列,其余为 0。
+            # * 预分配最大 rank 大小的 GPU buffer,下面只填前 aw.rank 行/列,其余为 0。
             a_gpu = torch.zeros(
                 self.max_lora_rank,
-                a_cpu.shape[1],
-                device=self.device,
+                a_cpu.shape[1],  # torch.Size([16, 2560])
+                device=self.device,  # GPU
                 dtype=self.dtype,
             )
             b_gpu = torch.zeros(
-                b_cpu.shape[0],
+                b_cpu.shape[0],  # torch.Size([4096, 16])
                 self.max_lora_rank,
-                device=self.device,
+                device=self.device,  # GPU
                 dtype=self.dtype,
             )
+
             # CPU -> GPU;将权重写入槽位张量。
             a_gpu[: aw.rank].copy_(a_cpu.to(dtype=self.dtype))
             b_gpu[:, : aw.rank].copy_(b_cpu.to(dtype=self.dtype))
-            slot[key] = (a_gpu, b_gpu)
+            slot[key] = (a_gpu, b_gpu)  # ! 'layers.0.self_attn.q_proj'
+        # *dict_keys(['layers.0.self_attn.q_proj', 'layers.0.self_attn.k_proj' ......
         self._slot_tensors[buffer_id] = slot
         self._slot_meta[buffer_id] = (aw.rank, aw.scaling)

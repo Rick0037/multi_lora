@@ -32,18 +32,19 @@ class LRUEvictionPolicy(EvictionPolicy):
         self.eviction_count = 0
 
     def mark_used(self, uid: Optional[str]) -> None:
-        # None(基座)不进入 LRU 链
+        #! 为什么 None(基座)不进入 LRU 链
         if uid is not None:
             self.access_order.pop(uid, None)
             self.access_order[uid] = None
 
     def select_victim(self, candidates: Set[Optional[str]]) -> Optional[str]:
-        # 从 LRU 链最旧端扫描,第一个落在 candidates 里的即淘汰目标。
+        #! 从 LRU 链最旧端扫描,第一个落在 candidates 里的即淘汰目标。
         for uid in list(self.access_order.keys()):
             if uid in candidates:
                 self.eviction_count += 1
                 return uid
-        # 若仅剩基座槽可驱逐(例如 batch 全为 LoRA),允许 victim=None。
+        #! 若仅剩基座槽可驱逐(例如 batch 全为 LoRA),允许 victim=None。
+        #! 这里是没办法了, 联合之前return的处理none make used
         if None in candidates:
             self.eviction_count += 1
             return None

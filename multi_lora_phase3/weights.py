@@ -68,6 +68,7 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         Linear(in_features=2560, out_features=16, bias=False)
         (Pdb) lora_b_layer
         Linear(in_features=16, out_features=4096, bias=False)
+        lora_a_layer.weight 原来一直在GPU
         """
         a = lora_a_layer.weight.detach().cpu().clone()
         b = lora_b_layer.weight.detach().cpu().clone()

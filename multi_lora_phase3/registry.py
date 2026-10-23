@@ -14,13 +14,13 @@ from typing import Dict, List, Optional, Union
 from uuid import uuid4
 
 # * lora 元数据封装 & 以及注册与管理
+# * 真感觉写的也一般, 太难看了, 全是没有用的代码
 
 
 @dataclass(frozen=True)
 class LoRARef:
-    """lora模型的元数据集合;稳定 lora_id、可读 lora_name / lora_path。
-    有了这个之后,lora id为一个随机生成的str,而不再和lora name一样
-    pinned=True 时池驱逐会跳过该 uid,避免卸载仍可能被调度的权重。
+    """
+    lora 源信息
     """
 
     # * 创建的时候同时生成了一个uuid
@@ -44,15 +44,19 @@ class LoRARef:
 
 
 class LoRARegistry:
-    """维护 name -> LoRARef,并通过引用计数跟踪进行中的请求.
-
-    数据流;HTTP 请求里 lora_path/name -> resolve_names/acquire 得到 lora_id 列表
-    -> manager.prepare_lora_batch 用这些 uid 作为 pool 的 key。
+    """
+    维护 name -> LoRARef, 实际上提供了获取这个LoraRef的机会
+    并通过引用计数跟踪进行中的请求.
+    数据流:
+    (1) HTTP 请求里 lora_path/name
+    (2) resolve_names/acquire 得到 lora_id 列表
+    (3) manager.prepare_lora_batch 用这些 uid 作为 pool 的 key
     """
 
     def __init__(self, initial: Optional[List[LoRARef]] = None) -> None:
         # lora_name -> LoRARef;OrderedDict 便于 LRU 把最近访问的 name 移到末尾。
         # * value 是返回原来的数据
+        # * OrderedDict 是有顺序的, 按照插入的顺序的
         self._registry: OrderedDict[str, LoRARef] = OrderedDict()
         # lora_id -> 进行中的请求数(acquire 加一,release 减一)。
         self._counters: Dict[str, int] = {}
@@ -70,7 +74,7 @@ class LoRARegistry:
         # * 比如 key not in self._countres.keys() return 0
         self._counters.setdefault(lora_ref.lora_id, 0)
 
-    # no used
+    # only used in test
     def unregister(self, lora_name: str) -> str:
         ref = self._registry.get(lora_name)
         if ref is None:
