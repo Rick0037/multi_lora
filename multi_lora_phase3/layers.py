@@ -26,15 +26,3 @@ def lora_delta(
     flat = x.reshape(-1, x.shape[-1])
     delta = (flat @ a.T @ b.T) * scaling
     return delta.reshape(*x.shape[:-1], b.shape[0])
-
-
-def forward_linear_with_pool_lora(
-    base: nn.Linear,
-    x: torch.Tensor,
-    lora_a: torch.Tensor,
-    lora_b: torch.Tensor,
-    scaling: float,
-    rank: int,
-) -> torch.Tensor:
-    """基座 Linear 输出 + 从 pool 槽位读出的 LoRA delta(单模块、单 adapter 槽)。"""
-    return base(x) + lora_delta(x, lora_a, lora_b, scaling, rank=rank)
