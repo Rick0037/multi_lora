@@ -1,5 +1,9 @@
 """Tests for multi_lora_phase3.batching (grouped vs row-wise reference)."""
 
+# * 运行方式:
+# * python -m pytest multi_lora_phase2/unittest/test_batching.py -v
+# * -v each row have a result
+
 from __future__ import annotations
 
 import copy
