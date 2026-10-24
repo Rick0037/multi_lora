@@ -1,9 +1,6 @@
 {
   "include": [
     "multi_lora",
-    "multi_lora_phase1",
-    "multi_lora_phase2",
-    "multi_lora_phase3"
   ],
   "exclude": [
     "**/.venv",
