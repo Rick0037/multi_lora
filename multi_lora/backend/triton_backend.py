@@ -64,7 +64,6 @@ class TritonLoRABackend(LoRABackend):
         if meta.weight_indices.dtype == torch.int32:
             return meta
         return KernelInputMetaData(
-            use_cuda_graph=meta.use_cuda_graph,
             bs=meta.bs,
             num_segments=meta.num_segments,
             seg_indptr=meta.seg_indptr,
@@ -73,5 +72,4 @@ class TritonLoRABackend(LoRABackend):
             scalings=meta.scalings,
             max_len=meta.max_len,
             seg_lens=meta.seg_lens,
-            permutation=meta.permutation,
         )

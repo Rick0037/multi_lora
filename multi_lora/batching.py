@@ -43,15 +43,6 @@ def validate_lora_batch(
     return len(distinct) <= max_loras_per_batch
 
 
-def validate_lora_set(
-    lora_ids: Sequence[LoraKey],
-    *,
-    max_loras_per_batch: int,
-) -> bool:
-    """validate_lora_batch 的别名。"""
-    return validate_lora_batch(lora_ids, max_loras_per_batch=max_loras_per_batch)
-
-
 @torch.inference_mode()
 def forward_logits_grouped(
     model: PeftModel,

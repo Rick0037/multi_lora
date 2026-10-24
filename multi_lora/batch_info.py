@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 class KernelInputMetaData:
     """Triton / 自定义 kernel 调用所需的 segment batch 元数据(GPU 张量视图)."""
 
-    use_cuda_graph: bool
     bs: int  # batch 内序列条数(与 weight_indices 长度一致)
     num_segments: int  # segment 个数,
     seg_indptr: torch.Tensor  # 前缀和;seg i 的 token 在 x 中起始于 seg_indptr[i]
@@ -29,7 +28,6 @@ class KernelInputMetaData:
     scalings: torch.Tensor  # 按 slot 索引的 LoRA scaling
     max_len: Optional[int]  # 本 batch 最长 segment,用于 Triton grid  sizing
     seg_lens: Optional[torch.Tensor]  # 每个 segment 的 token 数
-    permutation: Optional[torch.Tensor]  # 预留;csgmv 等扩展用
 
 
 def kernel_input_metadata_from_pool_lists(
@@ -40,7 +38,6 @@ def kernel_input_metadata_from_pool_lists(
     device: torch.device,
     dtype: torch.dtype,
     seq_lens: Optional[torch.Tensor] = None,
-    use_cuda_graph: bool = False,
 ) -> KernelInputMetaData:
     """把 pool 输出的 list 元数据转成 GPU 张量,供 kernel 直接读取."""
     bs = len(weight_indices)
@@ -59,7 +56,6 @@ def kernel_input_metadata_from_pool_lists(
         seg_indptr = torch.arange(bs + 1, device=device, dtype=torch.int32)
         num_segments = bs
         max_len = 1
-        perm = None
     else:
         # * prefill;每条序列可有多个 token,seg_indptr 由 seq_lens 前缀和构造
         seg_lens = seq_lens.to(device=device, dtype=torch.int32)
@@ -67,7 +63,6 @@ def kernel_input_metadata_from_pool_lists(
         seg_indptr = torch.zeros(num_segments + 1, device=device, dtype=torch.int32)
         seg_indptr[1:] = torch.cumsum(seg_lens, dim=0)
         max_len = int(seg_lens.max().item())
-        perm = None
     """
         ! num_segments = 3, 3 条请求即使都用同一个 adapter, 也是 3 个 segment
         ! adapter 只通过`weight_indices` 映射到槽位。
@@ -78,7 +73,6 @@ def kernel_input_metadata_from_pool_lists(
     """
 
     return KernelInputMetaData(
-        use_cuda_graph=use_cuda_graph,
         bs=bs,
         num_segments=num_segments,
         seg_indptr=seg_indptr,
@@ -87,18 +81,15 @@ def kernel_input_metadata_from_pool_lists(
         scalings=scal,
         max_len=max_len,
         seg_lens=seg_lens,
-        permutation=perm,
     )
 
 
 def kernel_input_metadata_from_pool_batch(
     pool_batch: "BatchLoRAInfo",
     *,
-    batch_size: int,
     device: torch.device,
     dtype: torch.dtype,
     seq_lens: Optional[torch.Tensor] = None,
-    use_cuda_graph: bool = False,
 ) -> KernelInputMetaData:
     """从 pool.build_batch_info 的 CPU list 结构一键构造 kernel 元数据."""
     return kernel_input_metadata_from_pool_lists(
@@ -108,5 +99,4 @@ def kernel_input_metadata_from_pool_batch(
         device=device,
         dtype=dtype,
         seq_lens=seq_lens,  # * 每个的长度 {len_1, len_2, len_3}
-        use_cuda_graph=use_cuda_graph,
     )

@@ -1,35 +1,33 @@
 """LoRA 适配器注册表;元数据、稳定 ID 与引用计数。
 
 职责(与 pool.py / manager.py 的配合);
-- 对外暴露人类可读的 lora_name;对内用稳定 lora_id(uuid)与 GPU 槽位 uid 对齐。
+- 对外暴露人类可读的 lora_name;内部 id 直接复用它,与 GPU 槽位 uid 对齐。
 - acquire / release 做引用计数;模拟 tokenizer 侧请求开始/结束,防止卸载仍在用的 adapter。
-- touch 供 LRU 驱逐侧按最近使用排序(本仓库 pool 的 LRU 按 uid;registry 的 LRU 可按 name 扩展)。
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from typing import Dict, List, Optional, Union
-from uuid import uuid4
 
 
 @dataclass(frozen=True)
 class LoRARef:
-    """适配器元数据;稳定 lora_id、可读 lora_name / lora_path.
+    """元数据集合体;内部 id 直接复用 lora_name."""
 
-    默认 lora_id 是随机生成的 UUID 字符串,不再直接等同于 lora_name。
-    """
-
-    # 未显式传入 lora_id 时,每次构造都会调用 default_factory 生成 UUID。
-    lora_id: str = field(default_factory=lambda: uuid4().hex)
-    lora_name: Optional[str] = None
+    lora_name: str
     lora_path: Optional[str] = None
 
+    @property
+    def lora_id(self) -> str:
+        """内部 id 与 lora_name 相同,不再额外生成 UUID."""
+        return self.lora_name
+
     def __post_init__(self) -> None:
-        """每次构造 LoRARef 后执行,校验 lora_id 非空."""
-        if not self.lora_id:
-            raise ValueError("lora_id cannot be empty")
+        """每次构造 LoRARef 后执行,校验 lora_name 非空."""
+        if not self.lora_name:
+            raise ValueError("lora_name cannot be empty")
 
     def __str__(self) -> str:
         """可读字符串,便于日志打印."""
@@ -94,13 +92,6 @@ class LoRARegistry:
             )
         return ref
 
-    def get_by_id(self, lora_id: str) -> LoRARef:
-        """按稳定 lora_id 查 LoRARef."""
-        for ref in self._registry.values():
-            if ref.lora_id == lora_id:
-                return ref
-        raise ValueError(f"unknown LoRA id: {lora_id}")
-
     def resolve_names(
         self, lora_names: Union[str, List[Optional[str]], None]
     ) -> Union[Optional[str], List[Optional[str]]]:
@@ -142,18 +133,3 @@ class LoRARegistry:
         if count <= 0:
             raise ValueError(f"release without acquire for {lora_id}")
         self._counters[lora_id] = count - 1
-
-    def touch(self, lora_name: str) -> LoRARef:
-        """LRU;访问时把 name 移到 OrderedDict 末尾."""
-        ref = self.get_by_name(lora_name)
-        self._registry.move_to_end(lora_name)
-        return ref
-
-    def all_refs(self) -> List[LoRARef]:
-        """返回当前已注册的全部 LoRARef."""
-        return list(self._registry.values())
-
-    @property
-    def names(self) -> List[str]:
-        """已注册的 adapter 可读名称列表."""
-        return list(self._registry.keys())

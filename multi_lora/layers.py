@@ -30,11 +30,10 @@ def lora_delta(
 class LinearWithLoRA(nn.Module):
     """替换 PEFT LoraLayer;在 forward 内完成 base GEMM + LoRA segment GEMM."""
 
-    def __init__(self, base_layer: nn.Module, module_key: str) -> None:
-        """base_layer 为 PEFT 包裹下的原始 Linear;module_key 与 pool / weight store 对齐."""
+    def __init__(self, base_layer: nn.Module) -> None:
+        """base_layer 为 PEFT 包裹下的原始 Linear;A/B 由 manager 每步注入."""
         super().__init__()
         self.base_layer = base_layer
-        self.module_key = module_key
         self.backend: Optional[LoRABackend] = None
         self.A_buffer: Optional[torch.Tensor] = None
         self.B_buffer: Optional[torch.Tensor] = None

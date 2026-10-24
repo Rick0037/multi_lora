@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Union
+from typing import Dict, Mapping, Optional, Sequence, Set
 
 import torch
 from peft import PeftModel
@@ -12,7 +12,6 @@ from peft.tuners.lora import LoraLayer
 from multi_lora.batching import (
     LoraKey,
     forward_logits_grouped,
-    forward_logits_rowwise_reference,
     load_peft_multi_adapter,
     validate_lora_batch,
 )
@@ -52,7 +51,6 @@ class MultiLoRAManager:
         """构造 manager;初始化 pool、backend,可选将 LoraLayer 替换为 LinearWithLoRA."""
         self.model = model
         self.max_loras_per_batch = max_loras_per_batch
-        self.max_lora_rank = max_lora_rank
         self.lora_target_suffixes = lora_target_suffixes
         self.registry = registry or LoRARegistry()
 
@@ -121,8 +119,6 @@ class MultiLoRAManager:
         self._weight_store[ref.lora_id] = weights
         self._id_to_peft_name[ref.lora_id] = peft_adapter_name
         self._peft_name_to_id[peft_adapter_name] = ref.lora_id
-        #! max_lora_rank如果更新但是 pool的max 没有更新啊
-        self.max_lora_rank = max(self.max_lora_rank, weights.rank)
         self.pool.finalize_buffers(self._weight_store)
 
     def convert_to_lora_layers(self) -> None:
@@ -158,7 +154,7 @@ class MultiLoRAManager:
             # pdb.set_trace()
             # * base = Linear(in_features=2560, out_features=4096, bias=False)
             # * inference_model 'layers.0.self_attn.q_proj'
-            wrapper = LinearWithLoRA(base, module_key)
+            wrapper = LinearWithLoRA(base)
             #! 使用新的linear 替换老linear
             replace_submodule(self.inference_model, full_name, wrapper)
             # * wrapper 和lora wappers中共享一个内存
@@ -198,7 +194,6 @@ class MultiLoRAManager:
         pool_info = self.prepare_lora_batch(lora_ids)
         meta = kernel_input_metadata_from_pool_batch(
             pool_info,
-            batch_size=len(lora_ids),
             device=self.pool.device,
             dtype=self.pool.dtype,
             seq_lens=seq_lens,
