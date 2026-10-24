@@ -74,7 +74,7 @@ def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
     x = torch.randn(
         3, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
     )
-    id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
+    id_a, id_b = "a", "b"
     lora_ids = [id_a, None, id_b]
 
     y = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
@@ -85,7 +85,7 @@ def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
 def test_kernel_input_metadata_tensor_shapes(tiny_linear_mgr):
     """build_kernel_input_metadata 产出的张量形状应符合 segment GEMM 约定。"""
     mgr = tiny_linear_mgr
-    id_a = mgr._peft_name_to_id["a"]
+    id_a = "a"
     meta, _ = mgr.build_kernel_input_metadata([id_a, None])
     assert meta.weight_indices.shape == (2,)
     assert meta.lora_ranks.shape[0] == mgr.max_loras_per_batch
@@ -99,7 +99,7 @@ def test_decode_repeated_forward(tiny_linear_mgr):
     x = torch.randn(
         2, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
     )
-    id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
+    id_a, id_b = "a", "b"
     lora_ids = [id_a, id_b]
     y1 = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
     # 相同输入与 lora_ids 重复 forward,结果应稳定

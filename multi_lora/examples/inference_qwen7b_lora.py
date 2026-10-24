@@ -164,7 +164,6 @@ def run_one_request(
     try:
         # 将当前 LoRA 加载到 pool,供后续 PEFT forward 使用
         info = mgr.prepare_lora_batch([lora_id])
-        peft_name = mgr.peft_name_for_row(lora_id)
         label = adapter_name if adapter_name else "base"
         print(
             f"  pool slot={info.weight_indices[0]} "
@@ -175,7 +174,7 @@ def run_one_request(
             mgr.model,
             tokenizer,
             prompt,
-            peft_adapter=peft_name,
+            peft_adapter=lora_id,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
         )

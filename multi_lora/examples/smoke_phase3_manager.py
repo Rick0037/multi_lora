@@ -67,7 +67,7 @@ def main() -> int:
         max_loras_per_batch=2,
         max_lora_rank=64,
     )
-    id_a = mgr._peft_name_to_id["a"]
+    id_a = "a"
     # 第一行用 adapter a,第二行 base(None)
     lora_ids = [id_a, None]
 
@@ -77,8 +77,8 @@ def main() -> int:
         attention_mask=enc["attention_mask"],
         lora_ids=lora_ids,
     )
-    # 将内部 lora_id 映射为 PEFT adapter 名,供逐行参考使用
-    peft_keys = [mgr.peft_name_for_row(x) for x in lora_ids]
+    # 内部 id 就是 adapter 名,逐行参考直接用同一份 lora_ids
+    peft_keys = lora_ids
     ref = forward_logits_rowwise_reference(
         mgr.model,
         input_ids=enc["input_ids"],
@@ -88,7 +88,7 @@ def main() -> int:
     ok = logits_close(grouped, ref, rtol=2e-3, atol=2e-3)
     print(f"weight_indices={info.weight_indices} evictions={info.evictions} close={ok}")
 
-    id_b = mgr._peft_name_to_id["b"]
+    id_b = "b"
     # 连续两次 prepare,触发 pool 槽位复用/驱逐
     mgr.prepare_lora_batch([id_a, id_b])
     mgr.prepare_lora_batch([id_a, None])

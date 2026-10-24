@@ -51,7 +51,7 @@ def test_manager_forward_matches_rowwise(tiny_mgr):
     mgr, tokenizer = tiny_mgr
     texts = ["hi", "bye there"]
     enc = tokenizer(texts, padding=True, return_tensors="pt")
-    id_a = mgr._peft_name_to_id["a"]
+    id_a = "a"
     lora_ids = [id_a, None]
 
     grouped, info = mgr.forward_logits_grouped(
@@ -59,7 +59,7 @@ def test_manager_forward_matches_rowwise(tiny_mgr):
         attention_mask=enc["attention_mask"],
         lora_ids=lora_ids,
     )
-    peft_keys = [mgr.peft_name_for_row(x) for x in lora_ids]
+    peft_keys = lora_ids
     ref = forward_logits_rowwise_reference(
         mgr.model,
         input_ids=enc["input_ids"],
@@ -73,7 +73,7 @@ def test_manager_forward_matches_rowwise(tiny_mgr):
 def test_pool_gpu_matches_cpu_store(tiny_mgr):
     """GPU pool slot 中的 LoRA 权重应与 CPU weight store 一致,且 delta 计算一致。"""
     mgr, _ = tiny_mgr
-    id_a = mgr._peft_name_to_id["a"]
+    id_a = "a"
     mgr.prepare_lora_batch([id_a])
     slot = mgr.pool.get_buffer_id(id_a)
     key = next(iter(mgr._weight_store[id_a].modules))
@@ -95,7 +95,7 @@ def test_pool_gpu_matches_cpu_store(tiny_mgr):
 def test_eviction_across_batches(tiny_mgr):
     """连续 prepare 不同 batch 组合时应触发 pool 驱逐。"""
     mgr, _ = tiny_mgr
-    id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
+    id_a, id_b = "a", "b"
     mgr.prepare_lora_batch([id_a, id_b])
     mgr.prepare_lora_batch([id_a, None])
     assert mgr.pool.eviction_policy.eviction_count >= 1

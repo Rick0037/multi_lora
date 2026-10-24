@@ -64,11 +64,8 @@ class MultiLoRAManager:
             eviction_policy=eviction_policy,
         )
 
-        # lora_id -> CPU 权重;None key 为基座占位;这是 pool H2D 拷贝的源
+        # adapter 名 -> CPU 权重;这是 pool H2D 拷贝的源
         self._weight_store: Dict[Optional[str], AdapterWeights] = {}
-        # lora_id <-> PEFT adapter 名;batching 层仍用 str adapter 名调用 set_adapter
-        self._id_to_peft_name: Dict[str, str] = {}
-        self._peft_name_to_id: Dict[str, str] = {}
 
         self._lora_backend: LoRABackend = get_lora_backend(lora_backend)
         # * 纯洁的model, 没有peft的model 封装,
@@ -116,9 +113,7 @@ class MultiLoRAManager:
         self.registry.register(ref)
         # * 抽取的是单个adapter的权重
         weights = extract_adapter_weights(self.model, peft_adapter_name)
-        self._weight_store[ref.lora_id] = weights
-        self._id_to_peft_name[ref.lora_id] = peft_adapter_name
-        self._peft_name_to_id[peft_adapter_name] = ref.lora_id
+        self._weight_store[peft_adapter_name] = weights
         self.pool.finalize_buffers(self._weight_store)
 
     def convert_to_lora_layers(self) -> None:
@@ -268,12 +263,6 @@ class MultiLoRAManager:
                 return True
         return False
 
-    def peft_name_for_row(self, lora_id: LoraKey) -> LoraKey:
-        """将内部 lora_id 映射回 PEFT adapter 名称(供 grouped forward 使用)."""
-        if lora_id is None:
-            return None
-        return self._id_to_peft_name[lora_id]
-
     def forward_logits_grouped(
         self,
         *,
@@ -283,12 +272,11 @@ class MultiLoRAManager:
     ) -> tuple[torch.Tensor, BatchLoRAInfo]:
         """PEFT 分组 forward(golden 参考路径,不走 Triton kernel)."""
         batch_info = self.prepare_lora_batch(lora_ids)
-        peft_keys = [self.peft_name_for_row(uid) for uid in lora_ids]
         logits = forward_logits_grouped(
             self.model,
             input_ids=input_ids,
             attention_mask=attention_mask,
-            lora_ids=peft_keys,
+            lora_ids=list(lora_ids),
         )
         return logits, batch_info
 

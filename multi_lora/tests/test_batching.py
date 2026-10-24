@@ -80,7 +80,7 @@ def test_grouped_matches_rowwise(tiny_peft_two_adapters):
     )
     input_ids = enc["input_ids"]
     attention_mask = enc["attention_mask"]
-    lora_ids = ["a", None, "b", "a"]  # lora name, 好像_peft_name_to_id为真正的id
+    lora_ids = ["a", None, "b", "a"]  # 直接用 adapter 名作为内部 id
 
     g = forward_logits_grouped(
         model,

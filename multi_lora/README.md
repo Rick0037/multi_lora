@@ -38,8 +38,7 @@ flowchart LR
 ```
 MultiLoRAManager.forward_logits_grouped(...)
 ├── prepare_lora_batch(lora_ids)              # 同 phase3;pool H2D + BatchLoRAInfo
-├── peft_name_for_row(uid) → PEFT adapter 名
-└── batching.forward_logits_grouped(PeftModel, ..., lora_ids=peft_keys)
+└── batching.forward_logits_grouped(PeftModel, ..., lora_ids=lora_ids)
 ```
 
 `examples/smoke_phase3_manager.py`、`inference_qwen7b_lora.py --batched-prefill` 均走此栈。
@@ -53,12 +52,11 @@ main()
 ├── MultiLoRAManager.from_pretrained(..., lora_backend="torch")   # 生成不用 kernel
 └── for each request:
     └── run_one_request(...)
-        ├── registry.acquire(adapter_name) → lora_id
-        ├── prepare_lora_batch([lora_id])                         # 暖 pool
-        ├── peft_name_for_row(lora_id)
+        ├── registry.acquire(adapter_name) → adapter 名(= 内部 id)
+        ├── prepare_lora_batch([adapter 名])                      # 暖 pool
         ├── generate_with_peft → model.set_adapter / disable_adapter
         │   └── hf_runner.generate_text → model.generate(...)
-        └── registry.release(lora_id)
+        └── registry.release(adapter 名)
 ```
 
 **说明**;串行 ``generate`` 示例仍走 PEFT;整模型 Triton 见 ``forward_with_triton_lora`` 与 ``examples/inference_qwen7b_triton.py``。
@@ -280,7 +278,7 @@ python multi_lora/examples/smoke_multi_lora_batch.py --low-vram --gpu-id 0 --lor
 
 ```python
 mgr = MultiLoRAManager.from_pretrained(base, {"a": path_a, "b": path_b}, max_loras_per_batch=2)
-lora_ids = [mgr._peft_name_to_id["a"], None]  # 或用 registry.acquire(["a", None])
+lora_ids = ["a", None]  # 直接用 adapter 名;None 表示基座
 logits, info = mgr.forward_logits_grouped(input_ids=..., attention_mask=..., lora_ids=lora_ids)
 # info.weight_indices / info.lora_ranks / info.scalings 供 KernelInputMetaData 使用
 ```

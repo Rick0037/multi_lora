@@ -78,8 +78,8 @@ def test_triton_matches_torch_full_model(cuda_mgr_pair):
     pattern = ["a", None, "b", "a", None, "b", "a", "b"]
 
     def _ids(mgr):
-        """将 pattern 中的适配器名映射为各 manager 的内部 lora_id。"""
-        return [mgr._peft_name_to_id[n] if n else None for n in pattern]
+        """pattern 里的名字就是内部 id,原样返回。"""
+        return [n if n else None for n in pattern]
 
     y_t = torch_mgr.forward_with_triton_lora(x=x, lora_ids=_ids(torch_mgr))
     y_tr = triton_mgr.forward_with_triton_lora(x=x, lora_ids=_ids(triton_mgr))

@@ -64,7 +64,7 @@ def main():
         max_lora_rank=64,
         lora_backend="torch",
     )
-    id_a, id_b = mgr._peft_name_to_id["a"], mgr._peft_name_to_id["b"]
+    id_a, id_b = "a", "b"
     # 交替分配 a/b 适配器,模拟 heterogeneous batch
     lora_ids = [id_a if i % 2 == 0 else id_b for i in range(args.batch)]
     device = mgr.pool.device

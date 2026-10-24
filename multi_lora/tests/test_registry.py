@@ -11,7 +11,7 @@ def test_register_acquire_release():
     ref = LoRARef(lora_name="a", lora_path="/path/a")
     reg.register(ref)
     lid = reg.acquire("a")
-    assert lid == ref.lora_id
+    assert lid == ref.lora_name
     reg.release(lid)
     reg.unregister("a")
 
@@ -21,7 +21,7 @@ def test_acquire_list_and_base():
     reg = LoRARegistry()
     reg.register(LoRARef(lora_name="x", lora_path="p"))
     ids = reg.acquire(["x", None, ""])
-    assert ids[0] == reg.get_by_name("x").lora_id
+    assert ids[0] == reg.get_by_name("x").lora_name
     assert ids[1] is None
     assert ids[2] is None
 
