@@ -13,7 +13,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from multi_lora.batching import forward_logits_rowwise_reference, logits_close
+from multi_lora.batching import forward_logits_rowwise_reference
 from multi_lora.hf_runner import (
     load_causal_lm,
     load_tokenizer,
@@ -69,23 +69,23 @@ def main() -> int:
     )
     id_a = "a"
     # 第一行用 adapter a,第二行 base(None)
-    lora_ids = [id_a, None]
+    lora_names = [id_a, None]
 
     enc = {k: v.to(next(mgr.model.parameters()).device) for k, v in enc.items()}
     grouped, info = mgr.forward_logits_peft(
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
-        lora_ids=lora_ids,
+        lora_names=lora_names,
     )
-    # 内部 id 就是 adapter 名,逐行参考直接用同一份 lora_ids
-    peft_keys = lora_ids
+    # 内部 id 就是 adapter 名,逐行参考直接用同一份 lora_names
+    peft_keys = lora_names
     ref = forward_logits_rowwise_reference(
         mgr.model,
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
-        lora_ids=peft_keys,
+        lora_names=peft_keys,
     )
-    ok = logits_close(grouped, ref, rtol=2e-3, atol=2e-3)
+    ok = torch.allclose(grouped, ref, rtol=2e-3, atol=2e-3)
     print(f"weight_indices={info.weight_indices} close={ok}")
 
     id_b = "b"

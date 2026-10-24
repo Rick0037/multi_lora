@@ -17,7 +17,6 @@ from multi_lora.batching import (  # noqa: E402
     forward_logits_grouped,
     forward_logits_rowwise_reference,
     load_peft_multi_adapter,
-    logits_close,
 )
 from multi_lora.hf_runner import (  # noqa: E402
     load_causal_lm,
@@ -49,10 +48,10 @@ def parse_args():
     p.add_argument(
         "--names",
         default="a,b",
-        help="PEFT adapter names (comma-separated), must match --lora-ids keys",
+        help="PEFT adapter names (comma-separated), must match --lora-names keys",
     )
     p.add_argument(
-        "--lora-ids",
+        "--lora-names",
         default="a,",
         help="Per-row adapter name or empty for base; comma-separated, same length as prompts",
     )
@@ -78,13 +77,13 @@ def main() -> int:
     input_ids = enc["input_ids"]
     attention_mask = enc["attention_mask"]
 
-    raw_ids = [x.strip() for x in args.lora_ids.split(",")]
+    raw_ids = [x.strip() for x in args.lora_names.split(",")]
     if len(raw_ids) != len(texts):
         raise SystemExit(
-            "--lora-ids must have one entry per prompt (use empty for base)"
+            "--lora-names must have one entry per prompt (use empty for base)"
         )
     # 空字符串映射为 base(None)
-    lora_ids: list[str | None] = [x if x else None for x in raw_ids]
+    lora_names: list[str | None] = [x if x else None for x in raw_ids]
 
     if args.device == "cpu":
         device = torch.device("cpu")
@@ -111,14 +110,14 @@ def main() -> int:
 
     # grouped;一次 forward,内部按 LoRA 分组
     g = forward_logits_grouped(
-        model, input_ids=input_ids, attention_mask=attention_mask, lora_ids=lora_ids
+        model, input_ids=input_ids, attention_mask=attention_mask, lora_names=lora_names
     )
     # row-wise;逐行切换 adapter 的参考实现
     r = forward_logits_rowwise_reference(
-        model, input_ids=input_ids, attention_mask=attention_mask, lora_ids=lora_ids
+        model, input_ids=input_ids, attention_mask=attention_mask, lora_names=lora_names
     )
 
-    ok = logits_close(g, r, rtol=2e-3, atol=2e-3)
+    ok = torch.allclose(g, r, rtol=2e-3, atol=2e-3)
     max_abs = (g - r).abs().max().item()
     print(f"grouped vs rowwise max_abs_diff={max_abs:.6g} close={ok}")
     release_model(model)

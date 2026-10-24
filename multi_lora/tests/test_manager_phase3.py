@@ -10,7 +10,7 @@ import torch
 from peft import LoraConfig, get_peft_model
 from transformers import AutoTokenizer, GPT2LMHeadModel
 
-from multi_lora.batching import forward_logits_rowwise_reference, logits_close
+from multi_lora.batching import forward_logits_rowwise_reference
 from multi_lora.layers import lora_delta
 from multi_lora.manager import MultiLoRAManager
 
@@ -52,21 +52,21 @@ def test_manager_forward_matches_rowwise(tiny_mgr):
     texts = ["hi", "bye there"]
     enc = tokenizer(texts, padding=True, return_tensors="pt")
     id_a = "a"
-    lora_ids = [id_a, None]
+    lora_names = [id_a, None]
 
     grouped, info = mgr.forward_logits_peft(
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
-        lora_ids=lora_ids,
+        lora_names=lora_names,
     )
-    peft_keys = lora_ids
+    peft_keys = lora_names
     ref = forward_logits_rowwise_reference(
         mgr.model,
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
-        lora_ids=peft_keys,
+        lora_names=peft_keys,
     )
-    assert logits_close(grouped, ref, rtol=1e-3, atol=1e-4)
+    assert torch.allclose(grouped, ref, rtol=1e-3, atol=1e-4)
     assert len(info.weight_indices) == 2
 
 
@@ -75,7 +75,7 @@ def test_pool_gpu_matches_cpu_store(tiny_mgr):
     mgr, _ = tiny_mgr
     id_a = "a"
     mgr.prepare_lora_batch([id_a])
-    slot = mgr.pool.get_buffer_id(id_a)
+    slot = mgr.pool.get_slot_id(id_a)
     key = next(iter(mgr._weight_store[id_a].modules))
     a_gpu, b_gpu = mgr.pool.get_slot_weights(slot, key)
     rank, _ = mgr.pool._slot_rank_scaling[slot]
@@ -99,5 +99,5 @@ def test_eviction_across_batches(tiny_mgr):
     mgr.prepare_lora_batch([id_a, id_b])
     mgr.prepare_lora_batch([id_a, None])
     assert mgr.pool.eviction_policy.eviction_count >= 1
-    # id_b 已被驱逐,不再映射到 buffer
-    assert id_b not in mgr.pool.name_to_buffer_id
+    # id_b 已被驱逐,不再映射到槽位
+    assert id_b not in mgr.pool.name_to_slot

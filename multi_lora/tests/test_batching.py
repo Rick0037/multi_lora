@@ -80,19 +80,19 @@ def test_grouped_matches_rowwise(tiny_peft_two_adapters):
     )
     input_ids = enc["input_ids"]
     attention_mask = enc["attention_mask"]
-    lora_ids = ["a", None, "b", "a"]  # 直接用 adapter 名作为内部 id
+    lora_names = ["a", None, "b", "a"]  # 直接用 adapter 名作为内部 id
 
     g = forward_logits_grouped(
         model,
         input_ids=input_ids,
         attention_mask=attention_mask,
-        lora_ids=lora_ids,
+        lora_names=lora_names,
     )
     r = forward_logits_rowwise_reference(
         model,
         input_ids=input_ids,
         attention_mask=attention_mask,
-        lora_ids=lora_ids,
+        lora_names=lora_names,
     )
 
     assert g.shape == r.shape

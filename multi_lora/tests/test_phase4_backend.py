@@ -51,14 +51,14 @@ def tiny_linear_mgr(tmp_path_factory):
     return mgr
 
 
-def _ref_rowwise(mgr, x, lora_ids):
+def _ref_rowwise(mgr, x, lora_names):
     """逐行参考;base linear + 每行单独 lora_delta,用于数值对比。"""
-    mgr.prepare_lora_batch(lora_ids)
+    mgr.prepare_lora_batch(lora_names)
     linear = mgr.lora_wrappers["lin"].base_layer
     yb = linear(x)
     out = yb.clone()
-    for i, name in enumerate(lora_ids):
-        slot = mgr.pool.get_buffer_id(name)
+    for i, name in enumerate(lora_names):
+        slot = mgr.pool.get_slot_id(name)
         r, s = mgr.pool._slot_rank_scaling[slot]
         if r == 0:
             continue
@@ -75,10 +75,10 @@ def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
         3, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
     )
     id_a, id_b = "a", "b"
-    lora_ids = [id_a, None, id_b]
+    lora_names = [id_a, None, id_b]
 
-    y = mgr.forward_with_lora(x=x, lora_ids=lora_ids)
-    y_ref = _ref_rowwise(mgr, x, lora_ids)
+    y = mgr.forward_with_lora(x=x, lora_names=lora_names)
+    y_ref = _ref_rowwise(mgr, x, lora_names)
     assert torch.allclose(y, y_ref, rtol=1e-4, atol=1e-5)
 
 
@@ -100,8 +100,8 @@ def test_decode_repeated_forward(tiny_linear_mgr):
         2, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
     )
     id_a, id_b = "a", "b"
-    lora_ids = [id_a, id_b]
-    y1 = mgr.forward_with_lora(x=x, lora_ids=lora_ids)
-    # 相同输入与 lora_ids 重复 forward,结果应稳定
-    y2 = mgr.forward_with_lora(x=x, lora_ids=lora_ids)
+    lora_names = [id_a, id_b]
+    y1 = mgr.forward_with_lora(x=x, lora_names=lora_names)
+    # 相同输入与 lora_names 重复 forward,结果应稳定
+    y2 = mgr.forward_with_lora(x=x, lora_names=lora_names)
     assert torch.allclose(y1, y2)
