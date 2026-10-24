@@ -16,17 +16,15 @@ from uuid import uuid4
 
 @dataclass(frozen=True)
 class LoRARef:
-    """适配器元数据;稳定 lora_id、可读 lora_name / lora_path。
+    """适配器元数据;稳定 lora_id、可读 lora_name / lora_path.
 
     默认 lora_id 是随机生成的 UUID 字符串,不再直接等同于 lora_name。
-    pinned=True 时池驱逐会跳过该 uid,避免卸载仍可能被调度的权重。
     """
 
     # 未显式传入 lora_id 时,每次构造都会调用 default_factory 生成 UUID。
     lora_id: str = field(default_factory=lambda: uuid4().hex)
     lora_name: Optional[str] = None
     lora_path: Optional[str] = None
-    pinned: bool = False
 
     def __post_init__(self) -> None:
         """每次构造 LoRARef 后执行,校验 lora_id 非空."""
@@ -45,7 +43,7 @@ class LoRARef:
 
 class LoRARegistry:
     """维护 name -> LoRARef,供调用方查询元数据,并通过引用计数跟踪进行中的请求.
-
+    lora的实体路径
     数据流;
     1. 请求传入可读的 lora_name。
     2. resolve_names/acquire 将名称解析为 lora_id 列表。

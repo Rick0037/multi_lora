@@ -28,6 +28,7 @@ from multi_lora.model_utils import (
     get_inference_model,
     module_key_matches,
     replace_submodule,
+    normalize_module_key,
 )
 from multi_lora.pool import BatchLoRAInfo, LoRAMemoryPool, Uid
 from multi_lora.registry import LoRARef, LoRARegistry
@@ -47,7 +48,6 @@ class MultiLoRAManager:
         registry: Optional[LoRARegistry] = None,
         lora_backend: str = "torch",
         lora_target_suffixes: Optional[Sequence[str]] = None,
-        convert_lora_layers: bool = True,
     ) -> None:
         """构造 manager;初始化 pool、backend,可选将 LoraLayer 替换为 LinearWithLoRA."""
         self.model = model
@@ -73,11 +73,9 @@ class MultiLoRAManager:
         self._peft_name_to_id: Dict[str, str] = {}
 
         self._lora_backend: LoRABackend = get_lora_backend(lora_backend)
+        # * 纯洁的model, 没有peft的model 封装,
         self.inference_model = get_inference_model(model)
         self.lora_wrappers: Dict[str, LinearWithLoRA] = {}
-
-        if convert_lora_layers:
-            self.convert_to_lora_layers()
 
     @classmethod
     def from_pretrained(
@@ -103,8 +101,7 @@ class MultiLoRAManager:
             max_lora_rank=max_lora_rank,
             eviction_policy=eviction_policy,
             lora_backend=lora_backend,
-            lora_target_suffixes=lora_target_suffixes,
-            convert_lora_layers=False,
+            lora_target_suffixes=lora_target_suffixes,  # *("q_proj", "k_proj", "v_proj", "o_proj")
         )
         for peft_name, path in adapters.items():
             ref = LoRARef(
@@ -113,17 +110,18 @@ class MultiLoRAManager:
             )
             mgr.register_adapter(ref, peft_adapter_name=peft_name)
         if convert_lora_layers:
-            mgr.convert_to_lora_layers()
+            mgr.convert_to_lora_layers()  # * peft.lora -> linear with lora
         return mgr
 
     def register_adapter(self, ref: LoRARef, *, peft_adapter_name: str) -> None:
         """注册 adapter 元数据,并从 PEFT 抽取 CPU 权重写入 weight_store."""
         self.registry.register(ref)
+        # * 抽取的是单个adapter的权重
         weights = extract_adapter_weights(self.model, peft_adapter_name)
         self._weight_store[ref.lora_id] = weights
         self._id_to_peft_name[ref.lora_id] = peft_adapter_name
         self._peft_name_to_id[peft_adapter_name] = ref.lora_id
-        # 运行池分配的 max_lora_rank 至少覆盖已注册 adapter 的最大 rank
+        #! max_lora_rank如果更新但是 pool的max 没有更新啊
         self.max_lora_rank = max(self.max_lora_rank, weights.rank)
         self.pool.finalize_buffers(self._weight_store)
 
@@ -132,50 +130,46 @@ class MultiLoRAManager:
         known_keys: Set[str] = set()
         for aw in self._weight_store.values():
             known_keys.update(aw.modules.keys())
-
+        # * 'layers.31.mlp.up_proj', 'layers.20.mlp.gate_proj',
+        # *'layers.19.self_attn.k_proj', 'layers.18.mlp.up_proj',
         self.lora_wrappers.clear()
         for full_name, mod in list(self.inference_model.named_modules()):
+            # * full_name = 'model.layers.0.self_attn.q_proj'
             if not isinstance(mod, LoraLayer):
                 continue
-            module_key = full_name
+            module_key = normalize_module_key(full_name)
+            # * module_key 'layers.0.self_attn.q_proj'
+
             if module_key not in known_keys:
                 continue
+            # * 只要对应的lora_target_suffixes
             if not module_key_matches(
                 module_key, target_suffixes=self.lora_target_suffixes
             ):
                 continue
+            #! 由于前缀问题 只有qkv o 没有别的
             base = (
                 mod.get_base_layer()
                 if hasattr(mod, "get_base_layer")
                 else mod.base_layer
             )
+            # import pdb
+
+            # pdb.set_trace()
+            # * base = Linear(in_features=2560, out_features=4096, bias=False)
+            # * inference_model 'layers.0.self_attn.q_proj'
             wrapper = LinearWithLoRA(base, module_key)
+            #! 使用新的linear 替换老linear
             replace_submodule(self.inference_model, full_name, wrapper)
+            # * wrapper 和lora wappers中共享一个内存
             self.lora_wrappers[module_key] = wrapper
 
-    def validate_lora_batch(
-        self,
-        lora_ids: Sequence[LoraKey],
-        *,
-        num_pinned_in_pool: int = 0,
-    ) -> bool:
-        """校验 distinct adapter 数与 pinned 槽位是否允许本 batch 准入."""
-        # distinct 表示不同的 lora adapter;pinned 可以理解为钉子户,这一部分永不驱逐
-        if not validate_lora_batch(
+    def validate_lora_batch(self, lora_ids: Sequence[LoraKey]) -> bool:
+        """校验本 batch 的 distinct adapter 数不超过槽位上限."""
+        # distinct 表示不同的 lora adapter
+        return validate_lora_batch(
             lora_ids, max_loras_per_batch=self.max_loras_per_batch
-        ):
-            return False
-        pinned_in_batch = 0
-        for uid in set(lora_ids):
-            if uid is None:
-                continue
-            ref = self.registry.get_by_id(uid)
-            pinned_in_batch += int(ref.pinned)
-        # 非 pinned 槽位数量须能容纳本 batch 中的 distinct adapter;
-        # 前提是请求要用的 pinned 必然已经在池里,即 pinned_in_batch <= num_pinned_in_pool
-        required = len(set(lora_ids)) - pinned_in_batch
-        vacancy = self.max_loras_per_batch - num_pinned_in_pool
-        return required <= vacancy
+        )
 
     def prepare_lora_batch(self, lora_ids: Sequence[LoraKey]) -> BatchLoRAInfo:
         """把本 batch 涉及的 uid 装入 GPU pool,返回 per-row slot 元数据."""
@@ -186,17 +180,11 @@ class MultiLoRAManager:
             )
 
         cur_uids: Set[Uid] = set(lora_ids)
-        # 基座 slot 占位,使 None uid 与 LoRA 共用统一 slot 语义
-        if None not in self._weight_store:
-            self._weight_store[None] = AdapterWeights(rank=0, scaling=0.0, modules={})
 
-        # lora_id -> LoRARef;供 pool 判断 pinned,不参与权重拷贝
-        refs = {ref.lora_id: ref for ref in self.registry.all_refs()}
         # 把本 batch 需要的权重装进 GPU 槽位;槽满时由 pool 驱逐旧 adapter
         self.pool.prepare_lora_batch(
-            cur_uids,  # 当前请求的 uid 集合,含 None(基座)
-            weight_store=self._weight_store,  # CPU 上的全部 adapter 权重
-            lora_refs=refs,  # 全部 adapter 的元数据
+            cur_uids,  # * 当前请求的 uid 集合,含 None(基座)
+            weight_store=self._weight_store,  # * CPU 上的全部 adapter 权重
         )
         # 为 batch 内每一行给出 weight_indices,以及各槽的 lora_ranks / scalings
         return self.pool.build_batch_info(list(lora_ids))
@@ -205,6 +193,8 @@ class MultiLoRAManager:
         self, lora_ids: Sequence[LoraKey], *, seq_lens: Optional[torch.Tensor] = None
     ) -> tuple[KernelInputMetaData, BatchLoRAInfo]:
         """prepare_lora_batch + 将 CPU list 元数据转为 GPU KernelInputMetaData."""
+        # * pool_info = BatchLoRAInfo(weight_indices=[2, 0, 1], lora_ranks=[0, 64, 16],
+        # * scalings=[0.0, 2.0, 2.0], evictions=0)
         pool_info = self.prepare_lora_batch(lora_ids)
         meta = kernel_input_metadata_from_pool_batch(
             pool_info,
@@ -221,10 +211,12 @@ class MultiLoRAManager:
         *,
         seq_lens: Optional[torch.Tensor] = None,
     ) -> tuple[KernelInputMetaData, BatchLoRAInfo]:
-        """每个 forward step 前;注入 backend 元数据 + 各 LinearWithLoRA 的 A/B buffer."""
+        """每个 forward step 前;
+        注入 backend 元数据 + 各 LinearWithLoRA 的 A/B buffer."""
         meta, pool_info = self.build_kernel_input_metadata(lora_ids, seq_lens=seq_lens)
         self._lora_backend.set_kernel_input_metadata(meta)
         for module_key, wrapper in self.lora_wrappers.items():
+            # a_buf [K, max_rank, in]、b_buf [K, out, max_rank];K = max_loras_per_batch(槽位总数)
             a_buf, b_buf = self.pool.get_module_buffers(module_key)
             wrapper.set_lora_info(self._lora_backend, a_buf, b_buf)
         return meta, pool_info
@@ -244,7 +236,16 @@ class MultiLoRAManager:
         if seq_lens is None and attention_mask is not None:
             # prefill;每条序列有效 token 数 = mask 求和
             seq_lens = attention_mask.sum(dim=1)
+        """
+        (Pdb) attention_mask
+        tensor([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]],
+        device='cuda:0')
 
+        (Pdb) seq_lens
+        tensor([13, 13, 22], device='cuda:0')
+        """
         self._setup_forward_batch(lora_ids, seq_lens=seq_lens)
 
         # 未 convert 的 PEFT LoraLayer 需 disable,避免与 LinearWithLoRA 双算
@@ -254,6 +255,7 @@ class MultiLoRAManager:
             else nullcontext()
         )
         with disable_ctx:
+            # * 区分一下到底是处理一个x, 还是处理整个input_ids
             if x is not None:
                 return self.inference_model(x, **kwargs)
             if input_ids is None:
@@ -276,12 +278,6 @@ class MultiLoRAManager:
         if lora_id is None:
             return None
         return self._id_to_peft_name[lora_id]
-
-    def resolve_request_lora_ids(
-        self, names: Union[str, List[Optional[str]], None]
-    ) -> Union[Optional[str], List[Optional[str]]]:
-        """解析请求中的 adapter 名并 acquire 引用计数,返回 lora_id."""
-        return self.registry.acquire(names)
 
     def forward_logits_grouped(
         self,

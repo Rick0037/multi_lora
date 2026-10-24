@@ -39,11 +39,6 @@ from multi_lora.hf_runner import (  # noqa: E402
 )
 from multi_lora.manager import ATTENTION_LORA_SUFFIXES, MultiLoRAManager  # noqa: E402
 
-# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
-
-
 DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
 # rank 16 只训练了qkvo
 ADAPTER_A = "GestaltLabs/Jeff-1"
@@ -131,7 +126,7 @@ def main() -> int:
     # 默认仅替换 attention 四投影;--all-lora-modules 时替换全部 LoRA 层
     suffixes = None if args.all_lora_modules else ATTENTION_LORA_SUFFIXES
 
-    print("multi_lora Qwen2-7B full-model Triton prefill (MVP)")
+    print("multi_lora Qwen3-4B full-model Triton prefill (MVP)")
     print(f"base={args.base_model} device={device} dtype={dtype}")
     print(f"lora_target_suffixes={suffixes or 'ALL'}")
 
@@ -166,6 +161,10 @@ def main() -> int:
         lora_ids = mgr.registry.resolve_names(adapter_names)
         if not isinstance(lora_ids, list):
             lora_ids = [lora_ids]
+        # import pdb
+
+        # pdb.set_trace()
+        # * lora_ids = ['5fb0c686725b471185627313463494b2', None, 'f2885ea1bfec4e0199ccd90ec2128278']
 
         # 整模型 Triton prefill;每行可绑定不同 LoRA
         out = mgr.forward_with_triton_lora(

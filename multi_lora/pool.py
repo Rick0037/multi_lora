@@ -11,7 +11,6 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import torch
 
 from multi_lora.eviction import EvictionPolicy, get_eviction_policy
-from multi_lora.registry import LoRARef
 from multi_lora.weights import AdapterWeights
 
 
@@ -68,6 +67,7 @@ class LoRAMemoryPool:
         self._slot_meta: Dict[int, Tuple[int, float]] = {}
 
         # module_key -> [K, max_rank, in] / [K, out, max_rank]
+        # K = max_loras_per_batch(槽位总数),第一维就是槽位号
         # key 例如 'layers.0.self_attn.q_proj';同一 key 的 A/B 按槽位维堆叠。
         self.A_buffers: Dict[str, torch.Tensor] = {}
         self.B_buffers: Dict[str, torch.Tensor] = {}
@@ -98,6 +98,13 @@ class LoRAMemoryPool:
             if not aw.modules:
                 continue
             for key, (a_cpu, b_cpu) in aw.modules.items():
+                # * 'layers.0.self_attn.q_proj'
+                """
+                (Pdb) in_dim
+                2560
+                (Pdb) out_dim
+                4096
+                """
                 in_dim = int(a_cpu.shape[1])
                 out_dim = int(b_cpu.shape[0])
                 if key in module_shapes:
@@ -114,6 +121,7 @@ class LoRAMemoryPool:
         for key, (in_dim, out_dim) in module_shapes.items():
             if key not in self.A_buffers:
                 # 按 max_rank 上界 padding,实际有效 rank 由 lora_ranks 控制
+                #! 第一个维度是K, 也就是把整个buffer内的权重都保存下来了
                 self.A_buffers[key] = torch.zeros(
                     k,
                     self.max_lora_rank,
@@ -134,16 +142,17 @@ class LoRAMemoryPool:
         cur_uids: Set[Uid],  # 当前批次需要的所有 uid，包含 None（基座）
         *,
         weight_store: Dict[Uid, AdapterWeights],  # 已加载的 CPU 权重集合
-        lora_refs: Dict[str, LoRARef],  # adapter 元数据，用于判断是否 pinned
     ) -> None:
         """确保 cur_uids 中每个 uid 都有 GPU 槽位;必要时驱逐旧 adapter.
 
         先对所有 cur_uids mark_used(更新 LRU/FIFO),再逐个确保 resident;
         这样本 batch 仍要用的 uid 不会在选 victim 时进入 candidates。
         """
-        self.finalize_buffers(weight_store)
+        # * 没有用
+        # self.finalize_buffers(weight_store)
 
         # 本 batch 用到的 uid 标记为最近使用,供 LRU 驱逐
+        # * (1) 标记使用, 实际上是加队列里面, 起的名字不好
         for uid in cur_uids:
             self.eviction_policy.mark_used(uid)
 
@@ -152,7 +161,9 @@ class LoRAMemoryPool:
         for uid in cur_uids:
             if uid in self.uid_to_buffer_id:
                 continue  # 已驻留,跳过 H2D
-            buffer_id = self._alloc_slot(cur_uids, lora_refs)
+            # * 驱逐找到一个可以的buffer_id
+            buffer_id = self._alloc_slot(cur_uids)
+            # * 把权重挂上去 weight store
             self._load_uid_to_slot(uid, buffer_id, weight_store)
             self.uid_to_buffer_id[uid] = buffer_id
             self.buffer_id_to_uid[buffer_id] = uid
@@ -181,28 +192,24 @@ class LoRAMemoryPool:
             evictions=getattr(self, "_last_evictions", 0),
         )
 
-    def _alloc_slot(self, cur_uids: Set[Uid], lora_refs: Dict[str, LoRARef]) -> int:
-        """分配空闲槽位,或驱逐一个不在本 batch 且非 pinned 的 uid 后复用其槽."""
+    def _alloc_slot(self, cur_uids: Set[Uid]) -> int:
+        """分配空闲槽位,或驱逐一个不在本 batch 的 uid 后复用其槽."""
         # 1) 优先用物理空槽
         for i in range(self.max_loras_per_batch):
             if self.buffer_id_to_uid[i] == EMPTY_SLOT:
                 return i
 
-        # 2) 无空槽;候选 = 已占用 ∧ 不在 cur_uids ∧ 非 pinned
+        # 2) 无空槽;候选 = 已占用 ∧ 不在 cur_uids
         candidates: Set[Uid] = set()
         for i in range(self.max_loras_per_batch):
             uid = self.buffer_id_to_uid[i]
             if uid == EMPTY_SLOT or uid in cur_uids:
                 continue
-            if uid is not None:
-                ref = lora_refs.get(uid)
-                if ref and ref.pinned:
-                    continue
             candidates.add(uid)  # type: ignore[arg-type]
 
         if not candidates:
             raise ValueError(
-                "no evictable pool slot (pinned adapters or batch exceeds max_loras_per_batch)"
+                "no evictable pool slot (batch exceeds max_loras_per_batch)"
             )
         # 优先驱逐 LoRA 槽;仅在无其它候选时驱逐基座槽(None)
         non_none = candidates - {None}
@@ -233,6 +240,8 @@ class LoRAMemoryPool:
         if aw.rank > self.max_lora_rank:
             raise ValueError(f"rank {aw.rank} > max_lora_rank {self.max_lora_rank}")
 
+        # TODO: 槽位复用时只清了本 adapter 拥有的模块,其余模块保留上一个 uid 的残留权重,
+        # 缺模块的 adapter(如只有 qkvo)会读到旧 MLP 权重。应在装载前按 slot 清空全部 A/B buffer。
         for key, (a_cpu, b_cpu) in aw.modules.items():
             if key not in self.A_buffers:
                 self.finalize_buffers(weight_store)

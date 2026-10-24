@@ -3,7 +3,6 @@
 import torch
 
 from multi_lora.pool import LoRAMemoryPool
-from multi_lora.registry import LoRARef
 from multi_lora.weights import AdapterWeights
 
 
@@ -30,18 +29,12 @@ def test_pool_eviction_lru():
         id_c: _fake_weights(),
         None: AdapterWeights(rank=0, scaling=0.0, modules={}),
     }
-    refs = {
-        id_a: LoRARef(lora_id=id_a, lora_name="a"),
-        id_b: LoRARef(lora_id=id_b, lora_name="b"),
-        id_c: LoRARef(lora_id=id_c, lora_name="c"),
-    }
-
     # 第一批;占满 2 个槽位
-    pool.prepare_lora_batch({id_a, id_b}, weight_store=store, lora_refs=refs)
+    pool.prepare_lora_batch({id_a, id_b}, weight_store=store)
     assert id_a in pool.uid_to_buffer_id and id_b in pool.uid_to_buffer_id
 
     # 第二批;需要 c 与 None,应驱逐 a、b
-    pool.prepare_lora_batch({id_c, None}, weight_store=store, lora_refs=refs)
+    pool.prepare_lora_batch({id_c, None}, weight_store=store)
     assert pool.eviction_policy.eviction_count >= 1
     assert id_c in pool.uid_to_buffer_id
     assert None in pool.uid_to_buffer_id

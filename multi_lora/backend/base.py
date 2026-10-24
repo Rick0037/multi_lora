@@ -50,4 +50,22 @@ class LoRABackend(ABC):
         # 先算 x @ A^T → [S, max_rank]
         mid = self.run_lora_a_sgemm(x, a_stack)
         # 再算 mid @ B^T * scale,并加到 y_base
+        """
+        - `x` :`[S, in]` ,S = batch 内所有 token 展平后的总数
+        - `a_stack` :`[K, max_rank, in]` ,`K = max_loras_per_batch（槽位总数）` ,每一格是一个 adapter 的 A
+        - `b_stack` :`[K, out, max_rank]` ,同上
+        - `y_base` :`[S, out]` ,基座 Linear 已经算好的输出
+        - 返回:`y_base + LoRA delta`
+        内部两步
+
+        1. A 阶段:把`x` 按 segment 切开,第 seg 段用`weight_indices[seg]` 选出槽位 slot,算`x[段] @ a_stack[slot, :r].T` →`[S, max_rank]`
+        2. B 阶段:`mid[段] @ b_stack[slot, :, :r].T * scaling[slot]` ,fused 加到`y_base`
+        所以“分块乘整个 x”这个说法基本对,但准确说是: 按 segment 分行挑权重 ,而不是把 x 本身切块做分块 GEMM。segment 的边界来自`seg_indptr` /`seg_lens` ,权重来自`weight_indices` 。
+
+        它不管的事
+
+        - 基座 Linear 的乘 —— 在 LinearWithLoRA.forward 里先算好再传进来
+        - 槽位分配、权重加载 —— pool 负责
+        - 模型结构 —— manager 负责
+        """
         return self.run_lora_b_sgemm(mid, b_stack, base_output=base_output)

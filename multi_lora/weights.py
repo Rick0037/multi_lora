@@ -37,12 +37,20 @@ class AdapterWeights:
     modules: ModuleWeights
 
 
+# * pass 截取字符串
 def _module_key(name: str) -> str:
     """归一化模块名,便于 pool 按 key 索引."""
     for prefix in ("base_model.model.", "model."):
         if name.startswith(prefix):
             name = name[len(prefix) :]
     return name
+
+
+"""
+从peftmodel 中抽取 指定adapter的权重, 返回结构体
+返回数值有 rank, scaling, 以及adapter中每个指定weight名称的权重对应的张量
+返回的时 单个lora model的
+"""
 
 
 def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeights:

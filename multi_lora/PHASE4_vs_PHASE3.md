@@ -208,7 +208,7 @@ Phase4 新增 GPU 张量版 `KernelInputMetaData`;
 
 以下在 Phase4 中 **语义不变**,可直接对照 Phase3 文档;
 
-- `registry.py`;`LoRARef`、`acquire` / `release`、`pinned`
+- `registry.py`;`LoRARef`、`acquire` / `release`
 - `eviction.py`;LRU / FIFO 驱逐
 - `weights.py`;`extract_adapter_weights` → CPU `AdapterWeights`
 - `batching.py`;分组 PEFT forward、`validate_lora_batch`
