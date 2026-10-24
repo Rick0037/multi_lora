@@ -1,13 +1,4 @@
-"""从 PEFT 模型抽取 LoRA A/B 权重,供 CPU 缓存与 GPU pool 装载.
-
-第三步数据流;
-1. MultiLoRAManager.register_adapter 调用 extract_adapter_weights,把每个 PEFT adapter
-   名对应的全部 LoraLayer 的 A/B 张量拉到 CPU,存进 _weight_store[adapter 名]。
-2. LoRAMemoryPool._load_name_to_slot 从 weight_store 取 CPU 张量,按 max_lora_rank 做
-   padding 后 copy_ 到 GPU 槽位,供第四步 fused kernel 或当前 layers.lora_delta 使用。
-
-注意;此处仅抽取各模块并按统一 rank 上界 padding,不做 qkv 等模块的权重合并。
-"""
+"""从 PEFT 模型抽取 LoRA 权重;供 CPU 缓存与 GPU pool 装载."""
 
 from __future__ import annotations
 
@@ -18,50 +9,32 @@ import torch
 from peft import PeftModel
 from peft.tuners.lora import LoraLayer
 
-# 本文件的作用是提取peft模型中的lora权重,并将其存储在AdapterWeights中
-
-# key 例如 'layers.0.self_attn.q_proj';value -> (lora_A, lora_B),均为 CPU 张量
 ModuleWeights = Dict[str, Tuple[torch.Tensor, torch.Tensor]]
 
 
 @dataclass
 class AdapterWeights:
-    """单个 adapter 的全部 LoRA 权重(CPU).
-
-    modules;归一化后的模块路径 -> (lora_A, lora_B)。
-    A 形状 [r, in],B 形状 [out, r];与常见 LoRA 公式 delta = (x @ A.T) @ B.T * scaling 一致。
-    """
+    """单个 adapter 的全部 LoRA 权重(CPU);A [r, in],B [out, r]."""
 
     rank: int
     scaling: float
     modules: ModuleWeights
 
 
-# * pass 截取字符串
-def _module_key(name: str) -> str:
-    """归一化模块名,便于 pool 按 key 索引."""
+def normalize_module_key(name: str) -> str:
+    """归一化模块名;剥掉 PEFT 前缀,与 pool buffer key 对齐."""
     for prefix in ("base_model.model.", "model."):
         if name.startswith(prefix):
-            name = name[len(prefix) :]
+            return name[len(prefix) :]
     return name
 
 
-"""
-从peftmodel 中抽取 指定adapter的权重, 返回结构体
-返回数值有 rank, scaling, 以及adapter中每个指定weight名称的权重对应的张量
-返回的时 单个lora model的
-"""
-
-
 def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeights:
-    """遍历 LoraLayer,抽取指定 adapter 的 lora_A / lora_B.
-
-    必须先 set_adapter,否则 lora_A 字典里可能没有该 adapter 的键。
-    """
-    model.set_adapter(adapter_name)  # 是PeftModel类下的一个函数
+    """遍历 LoraLayer,抽取指定 adapter 的 lora_A / lora_B;必须先 set_adapter."""
+    model.set_adapter(adapter_name)
     modules: ModuleWeights = {}
     rank: Optional[int] = None
-    scaling: Optional[float] = None  # alpha / rank
+    scaling: Optional[float] = None
 
     for full_name, module in model.named_modules():
         if not isinstance(module, LoraLayer):
@@ -79,25 +52,24 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         )
         fan_in = int(lora_a_layer.in_features)
         fan_out = int(lora_b_layer.out_features)
-        # nn.Linear 的 weight 为 [out_features, in_features];标准 LoRA A: [r, fan_in],B: [fan_out, r]。
+
         if a.shape == (fan_in, raw_r):
             a = a.T
         if a.shape != (raw_r, fan_in):
             raise ValueError(
-                f"lora_A shape {tuple(a.shape)} != ({raw_r}, {fan_in}) after normalize for {full_name}"
+                f"lora_A shape {tuple(a.shape)} != ({raw_r}, {fan_in}) for {full_name}"
             )
         if b.shape == (raw_r, fan_out):
             b = b.T
         if b.shape != (fan_out, raw_r):
             raise ValueError(
-                f"lora_B shape {tuple(b.shape)} != ({fan_out}, {raw_r}) after normalize for {full_name}"
+                f"lora_B shape {tuple(b.shape)} != ({fan_out}, {raw_r}) for {full_name}"
             )
-        key = _module_key(full_name)
+        key = normalize_module_key(full_name)
         modules[key] = (a, b)
         r = int(raw_r)
         if rank is None:
             rank = r
-            # scaling = alpha / r,与 HF PEFT 默认 LoRA 缩放一致。
             alpha = getattr(module, "lora_alpha", r)
             if isinstance(alpha, dict):
                 alpha = alpha.get(adapter_name, r)
@@ -109,3 +81,22 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         raise ValueError(f"no LoRA weights found for adapter {adapter_name}")
     assert rank is not None and scaling is not None
     return AdapterWeights(rank=rank, scaling=scaling, modules=modules)
+
+
+def collect_module_shapes(
+    weight_store: Dict[Optional[str], AdapterWeights],
+) -> Dict[str, Tuple[int, int]]:
+    """遍历 weight_store,收集全部 module 的 (in_dim, out_dim);用于 pool.finalize_buffers."""
+    shapes: Dict[str, Tuple[int, int]] = {}
+    for aw in weight_store.values():
+        for key, (a_cpu, b_cpu) in aw.modules.items():
+            in_dim, out_dim = int(a_cpu.shape[1]), int(b_cpu.shape[0])
+            if key in shapes:
+                old_in, old_out = shapes[key]
+                if (old_in, old_out) != (in_dim, out_dim):
+                    raise ValueError(
+                        f"shape mismatch for {key!r}: {shapes[key]} vs {(in_dim, out_dim)}"
+                    )
+            else:
+                shapes[key] = (in_dim, out_dim)
+    return shapes

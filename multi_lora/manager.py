@@ -1,4 +1,4 @@
-"""Multi-LoRA 编排;Registry + CPU 权重库 + GPU Pool + Triton 整模型 forward."""
+"""Multi-LoRA 编排;Registry + CPU 权重缓存 + GPU 槽位池 + Triton/Torch backend."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ import torch
 from peft import PeftModel
 from peft.tuners.lora import LoraLayer
 
-from multi_lora.batching import (
-    LoraKey,
-    forward_logits_grouped,
-    load_peft_multi_adapter,
-    validate_lora_batch,
-)
 from multi_lora.backend.base import LoRABackend
 from multi_lora.backend.registry import get_lora_backend
 from multi_lora.batch_info import (
     KernelInputMetaData,
     kernel_input_metadata_from_pool_batch,
+)
+from multi_lora.batching import (
+    LoraKey,
+    forward_logits_grouped,
+    load_peft_multi_adapter,
+    validate_lora_batch,
 )
 from multi_lora.layers import LinearWithLoRA
 from multi_lora.model_utils import (
@@ -27,15 +27,19 @@ from multi_lora.model_utils import (
     get_inference_model,
     module_key_matches,
     replace_submodule,
-    normalize_module_key,
 )
 from multi_lora.pool import BatchLoRAInfo, LoRAMemoryPool, LoraName
 from multi_lora.registry import LoRARef, LoRARegistry
-from multi_lora.weights import AdapterWeights, extract_adapter_weights
+from multi_lora.weights import (
+    AdapterWeights,
+    collect_module_shapes,
+    extract_adapter_weights,
+    normalize_module_key,
+)
 
 
 class MultiLoRAManager:
-    """Multi-LoRA 编排;注册表、CPU 权重库、GPU 池、整模型 Triton LoRA 层."""
+    """Multi-LoRA 调度器;registry(元数据) + _weight_store(CPU) + pool(GPU) + backend(kernel)."""
 
     def __init__(
         self,
@@ -64,14 +68,10 @@ class MultiLoRAManager:
             eviction_policy=eviction_policy,
         )
 
-        # adapter 名 -> CPU 权重;这是 pool H2D 拷贝的源
         self._weight_store: Dict[str, AdapterWeights] = {}
-
         self._lora_backend: LoRABackend = get_lora_backend(lora_backend)
-        # * 纯洁的model, 没有peft的model 封装,
         self.inference_model = get_inference_model(model)
         self.lora_wrappers: Dict[str, LinearWithLoRA] = {}
-        # 未 convert 时模型里一定还有 PEFT LoraLayer;convert 完成后会重新统计
         self._has_peft_layers = True
 
     @classmethod
@@ -106,51 +106,39 @@ class MultiLoRAManager:
     def register_adapter(self, ref: LoRARef) -> None:
         """注册 adapter 元数据,并从 PEFT 抽取 CPU 权重写入 weight_store."""
         self.registry.register(ref)
-        # * 抽取的是单个adapter的权重
         weights = extract_adapter_weights(self.model, ref.lora_name)
         self._weight_store[ref.lora_name] = weights
-        self.pool.finalize_buffers(self._weight_store)
+        shapes = collect_module_shapes(self._weight_store)
+        self.pool.finalize_buffers(shapes)
 
     def convert_to_lora_layers(self) -> None:
         """将目标 LoraLayer 替换为 LinearWithLoRA(Triton 热路径)."""
         known_keys: Set[str] = set()
         for aw in self._weight_store.values():
             known_keys.update(aw.modules.keys())
-        # * 'layers.31.mlp.up_proj', 'layers.20.mlp.gate_proj',
-        # *'layers.19.self_attn.k_proj', 'layers.18.mlp.up_proj',
+
         self.lora_wrappers.clear()
         for full_name, mod in list(self.inference_model.named_modules()):
-            # * full_name = 'model.layers.0.self_attn.q_proj'
             if not isinstance(mod, LoraLayer):
                 continue
             module_key = normalize_module_key(full_name)
-            # * module_key 'layers.0.self_attn.q_proj'
 
             if module_key not in known_keys:
                 continue
-            # * 只要对应的lora_target_suffixes
             if not module_key_matches(
                 module_key, target_suffixes=self.lora_target_suffixes
             ):
                 continue
-            #! 由于前缀问题 只有qkv o 没有别的
+
             base = (
                 mod.get_base_layer()
                 if hasattr(mod, "get_base_layer")
                 else mod.base_layer
             )
-            # import pdb
-
-            # pdb.set_trace()
-            # * base = Linear(in_features=2560, out_features=4096, bias=False)
-            # * inference_model 'layers.0.self_attn.q_proj'
             wrapper = LinearWithLoRA(base)
-            #! 使用新的linear 替换老linear
             replace_submodule(self.inference_model, full_name, wrapper)
-            # * wrapper 和lora wappers中共享一个内存
             self.lora_wrappers[module_key] = wrapper
 
-        # 替换完成后统计一次,forward 时不必再遍历整个模型
         self._has_peft_layers = any(
             isinstance(m, LoraLayer) for m in self.inference_model.modules()
         )
