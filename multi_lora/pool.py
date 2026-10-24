@@ -29,7 +29,7 @@ LoraName = Optional[str]  # None 表示基座模型(无 LoRA 权重)
 
 @dataclass
 class BatchLoRAInfo:
-    """单次 batch 的 LoRA 槽位索引与 rank/scaling 元数据(CPU list 形式)."""
+    """一次 batch 的槽位元数据;weight_indices 按行,ranks/scalings 按 slot(K 长)."""
 
     weight_indices: List[int]
     lora_ranks: List[int]
@@ -38,7 +38,7 @@ class BatchLoRAInfo:
 
 
 class LoRAMemoryPool:
-    """max_loras_per_batch 个 GPU 槽位;adapter 名(含 None=基座)映射到 slot."""
+    """K = max_loras_per_batch 个 GPU 槽位;槽内是 adapter 名、None(基座) 或 EMPTY_SLOT."""
 
     def __init__(
         self,
@@ -49,7 +49,7 @@ class LoRAMemoryPool:
         dtype: torch.dtype,
         eviction_policy: str = "lru",
     ) -> None:
-        """预分配槽位映射表;各 module 的 A/B buffer 在 finalize_buffers 时按需创建."""
+        """只建映射,不分配显存;buffer 由 finalize_buffers 懒创建。"""
         # K: 同时驻留 GPU 的不同 adapter（含基座槽位）的个数上界。
         self.max_loras_per_batch = max_loras_per_batch
         self.max_lora_rank = max_lora_rank
@@ -57,7 +57,7 @@ class LoRAMemoryPool:
         self.dtype = dtype
         self.eviction_policy: EvictionPolicy = get_eviction_policy(eviction_policy)
 
-        # name ↔ slot 双向映射;None（基座）也可占用一个槽位。
+        # * name to buffer index, None（基座）也可占用一个槽位。
         self.name_to_buffer_id: Dict[LoraName, int] = {}
         # 列表下标就是 slot_id;Union 表示槽内绑定的是 adapter 名或 EMPTY_SLOT 空闲标记。
         self.buffer_id_to_name: List[Union[LoraName, _EmptySlot]] = [
@@ -75,13 +75,13 @@ class LoRAMemoryPool:
         self.B_buffers: Dict[str, torch.Tensor] = {}
 
     def get_buffer_id(self, name: LoraName) -> int:
-        """查询 adapter 名当前驻留的 GPU 槽位编号."""
+        """adapter 名 → 槽位号;不在池中抛 KeyError。"""
         if name not in self.name_to_buffer_id:
             raise KeyError(f"lora {name!r} not resident in pool")
         return self.name_to_buffer_id[name]
 
     def get_module_buffers(self, module_key: str) -> Tuple[torch.Tensor, torch.Tensor]:
-        """返回可直接喂给 segment GEMM 的堆叠权重 [K, ...]."""
+        """该 module 的堆叠权重:A [K, max_rank, in],B [K, out, max_rank]。"""
         if module_key not in self.A_buffers:
             raise KeyError(f"module_key {module_key!r} not in pool buffers")
         return self.A_buffers[module_key], self.B_buffers[module_key]
@@ -89,16 +89,20 @@ class LoRAMemoryPool:
     def get_slot_weights(
         self, slot_id: int, module_key: str
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """单槽视图(测试 / 参考实现用)."""
+        """单槽视图(测试用):A [max_rank, in],B [out, max_rank]。"""
         a_stack, b_stack = self.get_module_buffers(module_key)
         return a_stack[slot_id], b_stack[slot_id]
 
     def finalize_buffers(self, weight_store: Dict[LoraName, AdapterWeights]) -> None:
-        """根据 CPU weight store 预分配各 module 的堆叠 GPU buffer(仅首次创建)."""
+        """为出现过的 module 预分配 GPU buffer;已存在则跳过,in/out 不一致报错。"""
         module_shapes: Dict[str, Tuple[int, int]] = {}
+        # import pdb
+
+        # pdb.set_trace()
         for aw in weight_store.values():
             if not aw.modules:
                 continue
+
             for key, (a_cpu, b_cpu) in aw.modules.items():
                 # * 'layers.0.self_attn.q_proj'
                 """
@@ -145,11 +149,7 @@ class LoRAMemoryPool:
         *,
         weight_store: Dict[LoraName, AdapterWeights],  # 已加载的 CPU 权重集合
     ) -> None:
-        """确保 cur_names 中每个 adapter 都有 GPU 槽位;必要时驱逐旧 adapter.
-
-        先对所有 cur_names mark_used(更新 LRU/FIFO),再逐个确保 resident;
-        这样本 batch 仍要用的 adapter 不会在选 victim 时进入 candidates。
-        """
+        """保证本 batch 的 adapter 都在 GPU;槽不够就驱逐不在本 batch 的,已驻留的跳过。"""
         # * 没有用
         # self.finalize_buffers(weight_store)
 
@@ -173,11 +173,7 @@ class LoRAMemoryPool:
         self._last_evictions = self.eviction_policy.eviction_count - evictions_before
 
     def build_batch_info(self, lora_ids: List[LoraName]) -> BatchLoRAInfo:
-        """根据每条序列的 adapter 名构造 per-row slot 索引与 per-slot rank/scaling.
-
-        weight_indices[i] = 第 i 条序列所用 adapter 的 slot;
-        lora_ranks[slot] / scalings[slot] 按下标索引槽位(非按行)。
-        """
+        """adapter 名 → per-row slot 与 per-slot rank/scaling;weight_indices 长度 = 行数。"""
         weight_indices: List[int] = []
         ranks = [0] * self.max_loras_per_batch
         scalings = [0.0] * self.max_loras_per_batch
@@ -195,7 +191,7 @@ class LoRAMemoryPool:
         )
 
     def _alloc_slot(self, cur_names: Set[LoraName]) -> int:
-        """分配空闲槽位,或驱逐一个不在本 batch 的 adapter 后复用其槽."""
+        """找可复用 slot:先空槽,再驱逐一个不在本 batch 的 adapter。"""
         # 1) 优先用物理空槽
         for i in range(self.max_loras_per_batch):
             if self.buffer_id_to_name[i] == EMPTY_SLOT:
@@ -230,7 +226,7 @@ class LoRAMemoryPool:
         buffer_id: int,
         weight_store: Dict[LoraName, AdapterWeights],
     ) -> None:
-        """把 weight_store 中该 adapter 的 CPU 权重 copy 到 GPU 槽位 buffer_id."""
+        """CPU → GPU 拷贝;None 只写 rank=0,rank 超上限报错。"""
         if name is None:
             # 基座 slot;无真实 LoRA 张量,rank=0 使 kernel 成为 no-op
             self._slot_meta[buffer_id] = (0, 0.0)

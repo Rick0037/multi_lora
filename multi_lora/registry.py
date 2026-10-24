@@ -34,6 +34,7 @@ class LoRARef:
         return f"{self.__class__.__name__}({', '.join(parts)})"
 
 
+# * manager得一部分
 class LoRARegistry:
     """维护 name -> LoRARef,供调用方查询元数据,并通过引用计数跟踪进行中的请求.
     lora的实体路径
