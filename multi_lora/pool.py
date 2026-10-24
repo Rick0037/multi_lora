@@ -14,15 +14,12 @@ from multi_lora.eviction import EvictionPolicy, get_eviction_policy
 from multi_lora.registry import LoraName
 from multi_lora.weights import AdapterWeights
 
-# 空槽标记。不能直接用 None,因为 None 已经被"基座"占用了
-_EMPTY = object()
-
 
 class LoRAMemoryPool:
     """K 个 GPU 槽位,每格是三种状态之一:空 / 基座 / 某个 adapter。
 
     name_to_buffer_id: adapter 名 -> 槽位号
-    buffer_id_to_name: 槽位号 -> adapter 名或 _EMPTY
+    slot_names:        槽位号 -> adapter 名(None 表示基座);不在表里就是空槽
     _slot_rank_scaling: 槽位号 -> (rank, scaling)
     """
 
@@ -34,7 +31,7 @@ class LoRAMemoryPool:
         dtype: torch.dtype = torch.float16,
         eviction_policy: str = "lru",
     ) -> None:
-        """只建映射,不分配显存;第一次装载某个 module 时才建它的 buffer."""
+        """只建映射,不分配显存;buffer 由 ensure_buffers 按 module 形状创建."""
         self.max_loras_per_batch = max_loras_per_batch
         self.max_lora_rank = max_lora_rank
         self.device = device
@@ -42,7 +39,7 @@ class LoRAMemoryPool:
         self.eviction_policy: EvictionPolicy = get_eviction_policy(eviction_policy)
 
         self.name_to_buffer_id: Dict[LoraName, int] = {}
-        self.buffer_id_to_name: List[object] = [_EMPTY] * max_loras_per_batch
+        self.slot_names: Dict[int, LoraName] = {}
         self._slot_rank_scaling: Dict[int, Tuple[int, float]] = {}
 
         # module_key -> [K, max_rank, in] / [K, out, max_rank]
@@ -107,15 +104,14 @@ class LoRAMemoryPool:
     def _alloc_slot(self, keep: Set[LoraName]) -> int:
         """找一个可写入的槽位:优先空槽,否则换出不在本 batch 里的 adapter."""
         for slot in range(self.max_loras_per_batch):
-            if self.buffer_id_to_name[slot] is _EMPTY:
+            if slot not in self.slot_names:
                 return slot
 
         # 候选 = 不在本 batch 里的槽;基座(None)单独记,只有没别的可选时才换它
         candidates: Set[LoraName] = set()
         base_is_evictable = False
-        for name in self.buffer_id_to_name:
-            if name is _EMPTY:
-                continue
+        for slot in self.slot_names:
+            name = self.slot_names[slot]
             if name in keep:
                 continue
             if name is None:
@@ -133,7 +129,7 @@ class LoRAMemoryPool:
         victim = self.eviction_policy.select_victim(candidates)
         slot = self.name_to_buffer_id.pop(victim)
         self.eviction_policy.remove(victim)
-        self.buffer_id_to_name[slot] = _EMPTY
+        self.slot_names.pop(slot)
         self._slot_rank_scaling.pop(slot, None)
         return slot
 
@@ -164,7 +160,7 @@ class LoRAMemoryPool:
     ) -> None:
         """把 CPU 权重拷进指定槽位;基座(None)只登记 rank=0,不写权重."""
         self.name_to_buffer_id[name] = slot
-        self.buffer_id_to_name[slot] = name
+        self.slot_names[slot] = name
 
         if name is None:
             self._slot_rank_scaling[slot] = (0, 0.0)

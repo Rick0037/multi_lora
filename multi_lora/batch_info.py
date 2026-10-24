@@ -48,7 +48,11 @@ def to_kernel_input_metadata(
     dtype: torch.dtype,
     seq_lens: Optional[torch.Tensor] = None,
 ) -> KernelInputMetaData:
-    """把 CPU list 转成 kernel 直接读取的 GPU 张量."""
+    """把 CPU list 转成 kernel 直接读取的 GPU 张量.
+
+    seq_lens 只在 prefill 时传:它描述的是展平后 x 里每段 token 的长度,
+    所以 x 必须是紧密排列的(不能把 padding 也算进去)。
+    """
     bs = len(pool_batch.weight_indices)
 
     weight_indices = torch.tensor(

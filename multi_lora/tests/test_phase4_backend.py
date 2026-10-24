@@ -69,7 +69,7 @@ def _ref_rowwise(mgr, x, lora_ids):
 
 
 def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
-    """整模型 forward_with_triton_lora 输出应与逐行参考一致。"""
+    """整模型 forward_with_lora 输出应与逐行参考一致。"""
     mgr = tiny_linear_mgr
     x = torch.randn(
         3, 16, device=next(mgr.model.parameters()).device, dtype=mgr.pool.dtype
@@ -77,7 +77,7 @@ def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
     id_a, id_b = "a", "b"
     lora_ids = [id_a, None, id_b]
 
-    y = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
+    y = mgr.forward_with_lora(x=x, lora_ids=lora_ids)
     y_ref = _ref_rowwise(mgr, x, lora_ids)
     assert torch.allclose(y, y_ref, rtol=1e-4, atol=1e-5)
 
@@ -101,7 +101,7 @@ def test_decode_repeated_forward(tiny_linear_mgr):
     )
     id_a, id_b = "a", "b"
     lora_ids = [id_a, id_b]
-    y1 = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
+    y1 = mgr.forward_with_lora(x=x, lora_ids=lora_ids)
     # 相同输入与 lora_ids 重复 forward,结果应稳定
-    y2 = mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
+    y2 = mgr.forward_with_lora(x=x, lora_ids=lora_ids)
     assert torch.allclose(y1, y2)

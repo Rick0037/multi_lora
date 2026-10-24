@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Qwen2-7B: 整模型 multi-LoRA prefill(attention 四投影 Triton segment GEMM).
 
-热路径为 MultiLoRAManager.forward_with_triton_lora;batch 级 prepare_lora_batch,
+热路径为 MultiLoRAManager.forward_with_lora;batch 级 prepare_lora_batch,
 各层 LinearWithLoRA 内 sgemm_lora_a/b。默认仅替换 q/k/v/o_proj(MVP);
 可用 --all-lora-modules 替换 weight store 中全部 LoRA 模块并与 PEFT grouped 对比。
 
@@ -83,7 +83,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--compare-peft",
         action="store_true",
-        help="Compare last-token logits norm vs forward_logits_grouped (needs --all-lora-modules)",
+        help="Compare last-token logits norm vs forward_logits_peft (needs --all-lora-modules)",
     )
     return p.parse_args()
 
@@ -167,7 +167,7 @@ def main() -> int:
         # * lora_ids = ['5fb0c686725b471185627313463494b2', None, 'f2885ea1bfec4e0199ccd90ec2128278']
 
         # 整模型 Triton prefill;每行可绑定不同 LoRA
-        out = mgr.forward_with_triton_lora(
+        out = mgr.forward_with_lora(
             input_ids=enc["input_ids"],
             attention_mask=enc["attention_mask"],
             lora_ids=lora_ids,
@@ -190,7 +190,7 @@ def main() -> int:
                     "WARN: --compare-peft requires --all-lora-modules for full parity"
                 )
             # PEFT grouped forward 作为数值参考
-            peft_logits, _ = mgr.forward_logits_grouped(
+            peft_logits, _ = mgr.forward_logits_peft(
                 input_ids=enc["input_ids"],
                 attention_mask=enc["attention_mask"],
                 lora_ids=lora_ids,
@@ -204,7 +204,7 @@ def main() -> int:
                 return 1
 
         print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
-        print("OK: forward_with_triton_lora prefill completed")
+        print("OK: forward_with_lora prefill completed")
     finally:
         release_model(mgr.model)
 

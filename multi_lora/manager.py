@@ -16,7 +16,7 @@ from multi_lora.batch_info import (
     to_kernel_input_metadata,
 )
 from multi_lora.batching import (
-    forward_logits_grouped as peft_forward_logits_grouped,
+    forward_logits_grouped,
     load_peft_multi_adapter,
     validate_lora_batch,
 )
@@ -176,7 +176,7 @@ class MultiLoRAManager:
     # ---------- 前向 ----------
 
     @torch.inference_mode()
-    def forward_with_triton_lora(
+    def forward_with_lora(
         self,
         *,
         lora_ids: Sequence[LoraName],
@@ -186,7 +186,10 @@ class MultiLoRAManager:
         seq_lens: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        """整模型 forward:先准备 batch,再让各 LinearWithLoRA 里算 LoRA delta."""
+        """整模型 forward:先准备 batch,再让各 LinearWithLoRA 里算 LoRA delta.
+
+        torch 和 triton 两个后端都走这个入口,具体由 lora_backend 决定。
+        """
         if seq_lens is None and attention_mask is not None:
             # prefill:每条序列的有效 token 数 = mask 求和
             seq_lens = attention_mask.sum(dim=1)
@@ -202,14 +205,14 @@ class MultiLoRAManager:
             if x is not None:
                 return self.inference_model(x, **kwargs)
             if input_ids is None:
-                raise ValueError("forward_with_triton_lora requires input_ids or x")
+                raise ValueError("forward_with_lora requires input_ids or x")
             return self.inference_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 **kwargs,
             )
 
-    def forward_logits_grouped(
+    def forward_logits_peft(
         self,
         *,
         input_ids: torch.Tensor,
@@ -218,7 +221,7 @@ class MultiLoRAManager:
     ) -> tuple[torch.Tensor, BatchLoRAInfo]:
         """PEFT 分组 forward(golden 参考路径,不走 kernel)."""
         batch_info = self.prepare_lora_batch(lora_ids)
-        logits = peft_forward_logits_grouped(
+        logits = forward_logits_grouped(
             self.model,
             input_ids=input_ids,
             attention_mask=attention_mask,

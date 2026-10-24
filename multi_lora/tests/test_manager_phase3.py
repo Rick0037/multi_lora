@@ -54,7 +54,7 @@ def test_manager_forward_matches_rowwise(tiny_mgr):
     id_a = "a"
     lora_ids = [id_a, None]
 
-    grouped, info = mgr.forward_logits_grouped(
+    grouped, info = mgr.forward_logits_peft(
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
         lora_ids=lora_ids,

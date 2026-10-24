@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Micro-benchmark: 整模型 ToyLM forward_with_triton_lora vs 逐行参考."""
+"""Micro-benchmark: 整模型 ToyLM forward_with_lora vs 逐行参考."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def main():
 
     def run_full():
         """整模型路径;manager 内部 batch prepare + 包装层 forward。"""
-        return mgr.forward_with_triton_lora(x=x, lora_ids=lora_ids)
+        return mgr.forward_with_lora(x=x, lora_ids=lora_ids)
 
     def run_row_loop():
         """逐行参考;base linear + 每行单独 lora_delta。"""

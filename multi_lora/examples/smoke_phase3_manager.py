@@ -72,7 +72,7 @@ def main() -> int:
     lora_ids = [id_a, None]
 
     enc = {k: v.to(next(mgr.model.parameters()).device) for k, v in enc.items()}
-    grouped, info = mgr.forward_logits_grouped(
+    grouped, info = mgr.forward_logits_peft(
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
         lora_ids=lora_ids,
