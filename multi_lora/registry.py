@@ -42,10 +42,11 @@ class LoRARegistry:
             )
         return ref
 
-    def resolve_names(
+    def normalize_names(
         self, lora_names: Union[str, List[Optional[str]], None]
     ) -> Union[Optional[str], List[Optional[str]]]:
-        """校验名字存在;空串 / None 统一成 None(基座),保持输入是单值还是列表."""
+        """把名字整理成标准形式:空串 / None -> None(基座),其余查表校验."""
+        # * 名字替换没有什么作用
         if lora_names is None:
             return None
 

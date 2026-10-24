@@ -158,7 +158,7 @@ def main() -> int:
     try:
         enc = {k: v.to(model_input_device(mgr.model)) for k, v in enc.items()}
         adapter_names = [n for n, _ in requests]
-        lora_ids = mgr.registry.resolve_names(adapter_names)
+        lora_ids = mgr.registry.normalize_names(adapter_names)
         if not isinstance(lora_ids, list):
             lora_ids = [lora_ids]
         # import pdb

@@ -160,7 +160,7 @@ def run_one_request(
     temperature: float,
 ) -> str:
     """校验适配器名、预热 GPU pool slot,然后生成文本。"""
-    lora_id = mgr.registry.resolve_names(adapter_name)
+    lora_id = mgr.registry.normalize_names(adapter_name)
 
     # 将当前 LoRA 加载到 pool,供后续 PEFT forward 使用
     info = mgr.prepare_lora_batch([lora_id])
@@ -190,7 +190,7 @@ def batched_prefill_check(
     enc = tokenizer(texts, padding=True, return_tensors="pt")
     device = model_input_device(mgr.model)
     enc = {k: v.to(device) for k, v in enc.items()}
-    lora_ids = mgr.registry.resolve_names([n for n, _ in requests])
+    lora_ids = mgr.registry.normalize_names([n for n, _ in requests])
     logits, info = mgr.forward_logits_peft(
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
