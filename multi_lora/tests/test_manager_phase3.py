@@ -100,4 +100,4 @@ def test_eviction_across_batches(tiny_mgr):
     mgr.prepare_lora_batch([id_a, None])
     assert mgr.pool.eviction_policy.eviction_count >= 1
     # id_b 已被驱逐,不再映射到 buffer
-    assert id_b not in mgr.pool.uid_to_buffer_id
+    assert id_b not in mgr.pool.name_to_buffer_id

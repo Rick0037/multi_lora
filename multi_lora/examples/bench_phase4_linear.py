@@ -81,8 +81,8 @@ def main():
         linear = mgr.lora_wrappers["lin"].base_layer
         yb = linear(x)
         acc = yb.clone()
-        for i, uid in enumerate(lora_ids):
-            slot = mgr.pool.get_buffer_id(uid)
+        for i, name in enumerate(lora_ids):
+            slot = mgr.pool.get_buffer_id(name)
             r, s = mgr.pool._slot_meta[slot]
             if r == 0:
                 continue

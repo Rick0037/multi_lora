@@ -3,7 +3,7 @@
 第三步数据流;
 1. MultiLoRAManager.register_adapter 调用 extract_adapter_weights,把每个 PEFT adapter
    名对应的全部 LoraLayer 的 A/B 张量拉到 CPU,存进 _weight_store[adapter 名]。
-2. LoRAMemoryPool._load_uid_to_slot 从 weight_store 取 CPU 张量,按 max_lora_rank 做
+2. LoRAMemoryPool._load_name_to_slot 从 weight_store 取 CPU 张量,按 max_lora_rank 做
    padding 后 copy_ 到 GPU 槽位,供第四步 fused kernel 或当前 layers.lora_delta 使用。
 
 注意;此处仅抽取各模块并按统一 rank 上界 padding,不做 qkv 等模块的权重合并。

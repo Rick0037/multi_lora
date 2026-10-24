@@ -126,9 +126,9 @@ out = mgr.forward_with_triton_lora(
 |------|--------|--------|
 | 权重存储 | `_slot_tensors[slot_id][module_key] = (A, B)` 每槽独立 dict | `A_buffers[module_key][slot_id]` / `B_buffers[module_key][slot_id]` **堆叠** |
 | 形状(单模块) | 每槽 `A: [max_rank, in]`, `B: [out, max_rank]` | 堆叠后 `A: [K, max_rank, in]`, `B: [K, out, max_rank]` |
-| 预分配 | 在 `_load_uid_to_slot` 里 per-slot 临时 `torch.zeros` | `finalize_buffers()` 按 module_key **一次性**预分配 |
+| 预分配 | 在 `_load_name_to_slot` 里 per-slot 临时 `torch.zeros` | `finalize_buffers()` 按 module_key **一次性**预分配 |
 | Kernel 读权重 | 无 kernel 路径 | `get_module_buffers(module_key)` **直接**返回堆叠张量 |
-| 驱逐 | 删除 `_slot_tensors[victim_slot]` | 仅清除 uid 映射;堆叠 buffer 行由下次 H2D 覆盖 |
+| 驱逐 | 删除 `_slot_tensors[victim_slot]` | 仅清除 adapter 名映射;堆叠 buffer 行由下次 H2D 覆盖 |
 | 删除的能力 | — | 无 `stack_module_weights()`(曾用于单层临时 stack,已移除) |
 
 设计动机;避免每个 forward、每个 module 做 `zeros + copy_` 的 stack 开销。
@@ -212,7 +212,7 @@ Phase4 新增 GPU 张量版 `KernelInputMetaData`;
 - `eviction.py`;LRU / FIFO 驱逐
 - `weights.py`;`extract_adapter_weights` → CPU `AdapterWeights`
 - `batching.py`;分组 PEFT forward、`validate_lora_batch`
-- `prepare_lora_batch` / `build_batch_info` 的 **batch 级**语义(distinct uid → slot → per-row `weight_indices`)
+- `prepare_lora_batch` / `build_batch_info` 的 **batch 级**语义(distinct adapter → slot → per-row `weight_indices`)
 
 Phase4 的 pool 重构 **不改变** 上述调度语义,只改变 GPU 权重的 **物理布局** 与 **消费方式**。
 

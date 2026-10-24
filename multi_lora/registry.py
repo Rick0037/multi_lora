@@ -1,7 +1,7 @@
 """LoRA 适配器注册表;元数据、稳定 ID 与引用计数。
 
 职责(与 pool.py / manager.py 的配合);
-- 对外暴露人类可读的 lora_name;内部 id 直接复用它,与 GPU 槽位 uid 对齐。
+- 对外暴露人类可读的 lora_name;GPU 槽位也用同一个名字作 key。
 - acquire / release 做引用计数;模拟 tokenizer 侧请求开始/结束,防止卸载仍在用的 adapter。
 """
 
@@ -11,7 +11,7 @@ from dataclasses import dataclass, fields
 from typing import Dict, List, Optional, Union
 
 
-# * 元数据 lora_name, lora_path
+# * 元数据 lora_name, lora_path, 这里的register是不包括none基座模型的
 @dataclass(frozen=True)
 class LoRARef:
     """元数据集合体;内部 id 直接复用 lora_name."""
@@ -61,7 +61,17 @@ class LoRARegistry:
         # setdefault 仅在 key 不存在时插入 0,已有计数不会被清零。
         self._counters.setdefault(lora_ref.lora_name, 0)
 
-    # 仅测试使用
+    def get_by_name(self, lora_name: str) -> LoRARef:
+        """按可读名称查 LoRARef."""
+        ref = self._registry.get(lora_name)
+        if ref is None:
+            raise ValueError(
+                f"unknown LoRA name: {lora_name}; loaded: {list(self._registry)}"
+            )
+        return ref
+
+    # *------------------ 仅测试使用---------------------
+    # * 如果要进行卸载在register里面的时候最好cpu的weight都给卸载了, 仅仅这里这只是 meta info
     def unregister(self, lora_name: str) -> str:
         """注销 adapter;若有进行中的 acquire 则拒绝."""
         ref = self._registry.get(lora_name)
@@ -74,15 +84,6 @@ class LoRARegistry:
         del self._registry[lora_name]
         self._counters.pop(ref.lora_name, None)
         return ref.lora_name
-
-    def get_by_name(self, lora_name: str) -> LoRARef:
-        """按可读名称查 LoRARef."""
-        ref = self._registry.get(lora_name)
-        if ref is None:
-            raise ValueError(
-                f"unknown LoRA name: {lora_name}; loaded: {list(self._registry)}"
-            )
-        return ref
 
     def resolve_names(
         self, lora_names: Union[str, List[Optional[str]], None]

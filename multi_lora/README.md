@@ -268,7 +268,7 @@ python multi_lora/examples/smoke_multi_lora_batch.py --low-vram --gpu-id 0 --lor
 |------|------------|
 | `LoRARef` / 注册表 | `registry.py` |
 | `max_loras_per_batch` | `batching.validate_lora_batch` / `manager.validate_lora_batch` |
-| GPU 槽位(uid→slot、rank/scale) | `pool.py` |
+| GPU 槽位(adapter 名→slot、rank/scale) | `pool.py` |
 | LRU / FIFO 驱逐 | `eviction.py` |
 | 编排与 `prepare_lora_batch` | `manager.py` |
 | 朴素 LoRA delta | `layers.py` |

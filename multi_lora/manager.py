@@ -29,7 +29,7 @@ from multi_lora.model_utils import (
     replace_submodule,
     normalize_module_key,
 )
-from multi_lora.pool import BatchLoRAInfo, LoRAMemoryPool, Uid
+from multi_lora.pool import BatchLoRAInfo, LoRAMemoryPool, LoraName
 from multi_lora.registry import LoRARef, LoRARegistry
 from multi_lora.weights import AdapterWeights, extract_adapter_weights
 
@@ -156,7 +156,7 @@ class MultiLoRAManager:
         )
 
     def prepare_lora_batch(self, lora_ids: Sequence[LoraKey]) -> BatchLoRAInfo:
-        """把本 batch 涉及的 uid 装入 GPU pool,返回 per-row slot 元数据."""
+        """把本 batch 涉及的 adapter 装入 GPU pool,返回 per-row slot 元数据."""
         if not validate_lora_batch(
             lora_ids, max_loras_per_batch=self.max_loras_per_batch
         ):
@@ -165,11 +165,11 @@ class MultiLoRAManager:
                 f"max={self.max_loras_per_batch}"
             )
 
-        cur_uids: Set[Uid] = set(lora_ids)
+        cur_names: Set[LoraName] = set(lora_ids)
 
         # 把本 batch 需要的权重装进 GPU 槽位;槽满时由 pool 驱逐旧 adapter
         self.pool.prepare_lora_batch(
-            cur_uids,  # * 当前请求的 uid 集合,含 None(基座)
+            cur_names,  # * 当前请求的 adapter 名集合,含 None(基座)
             weight_store=self._weight_store,  # * CPU 上的全部 adapter 权重
         )
         # 为 batch 内每一行给出 weight_indices,以及各槽的 lora_ranks / scalings
