@@ -39,12 +39,14 @@ from multi_lora.hf_runner import (  # noqa: E402
 )
 from multi_lora.manager import ATTENTION_LORA_SUFFIXES, MultiLoRAManager  # noqa: E402
 
+# base model
 DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
-# rank 16 只训练了qkvo
+# lora_1 rank 16 只训练了qkvo
 ADAPTER_A = "GestaltLabs/Jeff-1"
-# rank 64 qkvo 以及 mlp 部分
+# lora_2 rank 64 qkvo 以及 mlp 部分
 ADAPTER_B = "/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint"
 
+# 提示词
 DEFAULT_REQUESTS: List[Tuple[Optional[str], str]] = [
     (
         "a",
@@ -134,6 +136,7 @@ def main() -> int:
     texts = [p for _, p in requests]
     enc = tokenizer(texts, padding=True, return_tensors="pt")
 
+    # * AutoModelForCausalLM load model
     base = load_causal_lm(
         args.base_model,
         device=device,
@@ -158,19 +161,19 @@ def main() -> int:
     try:
         enc = {k: v.to(model_input_device(mgr.model)) for k, v in enc.items()}
         adapter_names = [n for n, _ in requests]
-        lora_ids = mgr.registry.normalize_names(adapter_names)
-        if not isinstance(lora_ids, list):
-            lora_ids = [lora_ids]
+        lora_names = mgr.registry.normalize_names(adapter_names)
+        if not isinstance(lora_names, list):
+            lora_names = [lora_names]
         # import pdb
 
         # pdb.set_trace()
-        # * lora_ids = ['5fb0c686725b471185627313463494b2', None, 'f2885ea1bfec4e0199ccd90ec2128278']
+        # * lora_names = ['5fb0c686725b471185627313463494b2', None, 'f2885ea1bfec4e0199ccd90ec2128278']
 
         # 整模型 Triton prefill;每行可绑定不同 LoRA
         out = mgr.forward_with_lora(
             input_ids=enc["input_ids"],
             attention_mask=enc["attention_mask"],
-            lora_ids=lora_ids,
+            lora_names=lora_names,
             use_cache=False,
         )
         logits = out.logits if hasattr(out, "logits") else out
@@ -193,7 +196,7 @@ def main() -> int:
             peft_logits, _ = mgr.forward_logits_peft(
                 input_ids=enc["input_ids"],
                 attention_mask=enc["attention_mask"],
-                lora_ids=lora_ids,
+                lora_names=lora_names,
             )
             diff = (last_logits - peft_logits[rows, last]).abs().max().item()
             ok = torch.allclose(

@@ -46,7 +46,7 @@ class LoRARegistry:
         self, lora_names: Union[str, List[Optional[str]], None]
     ) -> Union[Optional[str], List[Optional[str]]]:
         """把名字整理成标准形式:空串 / None -> None(基座),其余查表校验."""
-        # * 名字替换没有什么作用
+        # * 名字替换
         if lora_names is None:
             return None
 

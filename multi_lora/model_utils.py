@@ -36,13 +36,13 @@ def replace_submodule(root: nn.Module, module_name: str, new_module: nn.Module) 
 def module_key_matches(
     module_key: str,
     *,
-    target_suffixes: Optional[Sequence[str]],
+    lora_target_suffixes: Optional[Sequence[str]],
 ) -> bool:
     """该模块名是否命中目标后缀;不传后缀表示全部命中."""
-    if target_suffixes is None:
+    if lora_target_suffixes is None:
         return True
 
-    for suffix in target_suffixes:
+    for suffix in lora_target_suffixes:
         if module_key.endswith(suffix):
             return True
     return False
@@ -60,7 +60,7 @@ def convert_lora_layers(
     model: nn.Module,
     module_keys: Set[str],
     *,
-    target_suffixes: Optional[Sequence[str]] = None,
+    lora_target_suffixes: Optional[Sequence[str]] = None,
 ) -> Dict[str, LinearWithLoRA]:
     """把命中目标的 LoraLayer 原地换成 LinearWithLoRA,返回 module_key -> wrapper."""
     wrappers: Dict[str, LinearWithLoRA] = {}
@@ -72,7 +72,9 @@ def convert_lora_layers(
         module_key = normalize_module_key(full_name)
         if module_key not in module_keys:
             continue
-        if not module_key_matches(module_key, target_suffixes=target_suffixes):
+        if not module_key_matches(
+            module_key, lora_target_suffixes=lora_target_suffixes
+        ):
             continue
 
         wrapper = LinearWithLoRA(module.get_base_layer())

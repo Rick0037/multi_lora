@@ -66,23 +66,23 @@ def main():
     )
     id_a, id_b = "a", "b"
     # 交替分配 a/b 适配器,模拟 heterogeneous batch
-    lora_ids = [id_a if i % 2 == 0 else id_b for i in range(args.batch)]
+    lora_names = [id_a if i % 2 == 0 else id_b for i in range(args.batch)]
     device = mgr.pool.device
     dtype = mgr.pool.dtype
     x = torch.randn(args.batch, 256, device=device, dtype=dtype)
 
     def run_full():
         """整模型路径;manager 内部 batch prepare + 包装层 forward。"""
-        return mgr.forward_with_lora(x=x, lora_ids=lora_ids)
+        return mgr.forward_with_lora(x=x, lora_names=lora_names)
 
     def run_row_loop():
         """逐行参考;base linear + 每行单独 lora_delta。"""
-        mgr.prepare_lora_batch(lora_ids)
+        mgr.prepare_lora_batch(lora_names)
         linear = mgr.lora_wrappers["lin"].base_layer
         yb = linear(x)
         acc = yb.clone()
-        for i, name in enumerate(lora_ids):
-            slot = mgr.pool.get_buffer_id(name)
+        for i, name in enumerate(lora_names):
+            slot = mgr.pool.get_slot_id(name)
             r, s = mgr.pool._slot_rank_scaling[slot]
             if r == 0:
                 continue

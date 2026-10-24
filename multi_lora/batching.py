@@ -16,27 +16,27 @@ from multi_lora.registry import LoraName
 
 
 def group_row_indices(
-    lora_ids: Sequence[LoraName],
+    lora_names: Sequence[LoraName],
 ) -> "OrderedDict[LoraName, List[int]]":
     """按 adapter 把行号分组,保持每组第一次出现的顺序.
 
     例如 ["a", None, "a"] -> {"a": [0, 2], None: [1]}
     """
     groups: "OrderedDict[LoraName, List[int]]" = OrderedDict()
-    for i, key in enumerate(lora_ids):
-        if key not in groups:
-            groups[key] = []
-        groups[key].append(i)
+    for i, name in enumerate(lora_names):
+        if name not in groups:
+            groups[name] = []
+        groups[name].append(i)
     return groups
 
 
 def validate_lora_batch(
-    lora_ids: Sequence[LoraName],
+    lora_names: Sequence[LoraName],
     *,
     max_loras_per_batch: int,
 ) -> bool:
     """本 batch 里不同的 adapter 数是否超过槽位上限(None 也算一个)."""
-    return len(set(lora_ids)) <= max_loras_per_batch
+    return len(set(lora_names)) <= max_loras_per_batch
 
 
 @torch.inference_mode()
@@ -45,17 +45,17 @@ def forward_logits_grouped(
     *,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
-    lora_ids: Sequence[LoraName],
+    lora_names: Sequence[LoraName],
 ) -> torch.Tensor:
     """把行按 adapter 分组,各组跑一次,再按原行号写回 logits."""
     if input_ids.dim() != 2:
         raise ValueError("input_ids must be [batch, seq]")
     batch_size = input_ids.shape[0]
-    if len(lora_ids) != batch_size:
-        raise ValueError("lora_ids length must match batch size")
+    if len(lora_names) != batch_size:
+        raise ValueError("lora_names length must match batch size")
 
     out_logits: Optional[torch.Tensor] = None
-    groups = group_row_indices(lora_ids)
+    groups = group_row_indices(lora_names)
 
     for adapter, rows in groups.items():
         # 取出本组的行,组成子 batch
@@ -109,7 +109,7 @@ def forward_logits_rowwise_reference(
     *,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
-    lora_ids: Sequence[LoraName],
+    lora_names: Sequence[LoraName],
 ) -> torch.Tensor:
     """参考实现:每行单独跑一次 forward,再在 batch 维拼起来."""
     pieces: List[torch.Tensor] = []
@@ -122,7 +122,7 @@ def forward_logits_rowwise_reference(
         else:
             row_mask = attention_mask[i : i + 1]
 
-        adapter = lora_ids[i]
+        adapter = lora_names[i]
         if adapter is None:
             with model.disable_adapter():
                 log = model(
@@ -174,14 +174,3 @@ def load_peft_multi_adapter(
         model.load_adapter(adapters[name], adapter_name=name)
 
     return model
-
-
-def logits_close(
-    a: torch.Tensor,
-    b: torch.Tensor,
-    *,
-    rtol: float = 1e-3,
-    atol: float = 1e-4,
-) -> bool:
-    """两组 logits 是否在给定容差内一致(单测用)."""
-    return torch.allclose(a, b, rtol=rtol, atol=atol)

@@ -46,7 +46,7 @@ class LinearWithLoRA(nn.Module):
         a_buffer: torch.Tensor,
         b_buffer: torch.Tensor,
     ) -> None:
-        """每个 forward step 前由 manager 注入:后端 + 堆叠权重 [K, ...]."""
+        """每个 forward step 前由 manager 注入:后端 + 按槽位排列的权重 [K, ...]."""
         self.backend = backend
         self.A_buffer = a_buffer
         self.B_buffer = b_buffer

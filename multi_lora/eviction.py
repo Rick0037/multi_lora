@@ -49,6 +49,3 @@ class EvictionPolicy:
             self.order.pop(name, None)
 
 
-def get_eviction_policy(name: str) -> EvictionPolicy:
-    """按名字创建策略:lru | fifo."""
-    return EvictionPolicy(name.lower().strip())

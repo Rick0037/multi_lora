@@ -190,11 +190,11 @@ def batched_prefill_check(
     enc = tokenizer(texts, padding=True, return_tensors="pt")
     device = model_input_device(mgr.model)
     enc = {k: v.to(device) for k, v in enc.items()}
-    lora_ids = mgr.registry.normalize_names([n for n, _ in requests])
+    lora_names = mgr.registry.normalize_names([n for n, _ in requests])
     logits, info = mgr.forward_logits_peft(
         input_ids=enc["input_ids"],
         attention_mask=enc["attention_mask"],
-        lora_ids=lora_ids,
+        lora_names=lora_names,
     )
     # 每条序列 prefill 最后一个有效位置
     last_idx = enc["attention_mask"].sum(dim=1) - 1

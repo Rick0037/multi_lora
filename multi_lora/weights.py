@@ -19,15 +19,16 @@ class AdapterWeights:
 
     rank: int
     scaling: float
+    # * 单个的adapter的所有权重
     modules: ModuleWeights
 
 
-def normalize_module_key(name: str) -> str:
+def normalize_module_key(module_name: str) -> str:
     """去掉 PEFT 加的前缀,让模块名和 pool 的 buffer key 对得上."""
     for prefix in ("base_model.model.", "model."):
-        if name.startswith(prefix):
-            return name[len(prefix) :]
-    return name
+        if module_name.startswith(prefix):
+            return module_name[len(prefix) :]
+    return module_name
 
 
 def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeights:
@@ -47,13 +48,15 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         # PEFT 里 A 是 [rank, in],B 是 [out, rank]
         a = module.lora_A[adapter_name].weight.detach().cpu().clone()
         b = module.lora_B[adapter_name].weight.detach().cpu().clone()
-        r = int(module.r[adapter_name])
+        module_rank = int(module.r[adapter_name])
 
         if rank is None:
-            rank = r
-            scaling = float(module.lora_alpha[adapter_name]) / r
-        elif rank != r:
-            raise ValueError(f"rank mismatch in adapter {adapter_name}: {rank} vs {r}")
+            rank = module_rank
+            scaling = float(module.lora_alpha[adapter_name]) / module_rank
+        elif rank != module_rank:
+            raise ValueError(
+                f"rank mismatch in adapter {adapter_name}: {rank} vs {module_rank}"
+            )
 
         modules[normalize_module_key(full_name)] = (a, b)
 
