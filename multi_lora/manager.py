@@ -30,11 +30,7 @@ from multi_lora.model_utils import (
 )
 from multi_lora.pool import LoRAMemoryPool, LoraName
 from multi_lora.registry import LoRARef, LoRARegistry
-from multi_lora.weights import (
-    AdapterWeights,
-    collect_module_shapes,
-    extract_adapter_weights,
-)
+from multi_lora.weights import AdapterWeights, extract_adapter_weights
 
 
 class MultiLoRAManager:
@@ -114,12 +110,11 @@ class MultiLoRAManager:
         return mgr
 
     def register_adapter(self, ref: LoRARef) -> None:
-        """登记元数据 + 抽出 CPU 权重 + 为新模块分配 GPU buffer."""
+        """登记元数据、抽取 CPU 权重,并为新 module 分配 GPU buffer."""
         self.registry.register(ref)
-        self._weight_store[ref.lora_name] = extract_adapter_weights(
-            self.model, ref.lora_name
-        )
-        self.pool.finalize_buffers(collect_module_shapes(self._weight_store))
+        weights = extract_adapter_weights(self.model, ref.lora_name)
+        self._weight_store[ref.lora_name] = weights
+        self.pool.ensure_buffers(weights)
 
     def convert_to_lora_layers(self) -> None:
         """把目标 LoraLayer 换成 LinearWithLoRA(走 backend 的快路径)."""

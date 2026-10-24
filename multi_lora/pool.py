@@ -1,7 +1,6 @@
-"""GPU 槽位池:把 adapter 的权重放进固定的 K 个 GPU 槽位,并负责装载与换出.
+"""GPU 槽位池:固定 K 个槽位,负责把 CPU 权重装进去、槽满时换出.
 
-权重一共三层,本模块是最底下一层:
-    PEFT 里的权重  --抽取-->  CPU 上的 AdapterWeights  --装载-->  本模块的 GPU 槽位
+PEFT 权重 --抽取--> CPU AdapterWeights --装载--> 本模块的 GPU 槽位
 """
 
 from __future__ import annotations
@@ -14,19 +13,19 @@ from multi_lora.batch_info import BatchLoRAInfo
 from multi_lora.eviction import EvictionPolicy, get_eviction_policy
 from multi_lora.weights import AdapterWeights
 
-# adapter 名;None 是一个合法的 key,表示"基座"(不使用任何 LoRA)
+# adapter 名;None 是合法的 key,表示"基座"(不使用任何 LoRA)
 LoraName = Optional[str]
 
-# 空槽位的占位标记。不能直接用 None,因为 None 已经被"基座"占用了
+# 空槽标记。不能直接用 None,因为 None 已经被"基座"占用了
 _EMPTY = object()
 
 
 class LoRAMemoryPool:
-    """K 个 GPU 槽位;每格放一个 adapter 的 A/B 权重,或空槽,或基座。
+    """K 个 GPU 槽位,每格是三种状态之一:空 / 基座 / 某个 adapter。
 
-    - name_to_buffer_id: adapter 名 -> 槽位号
-    - buffer_id_to_name: 槽位号 -> adapter 名 / _EMPTY
-    - _slot_meta:        槽位号 -> (rank, scaling)
+    name_to_buffer_id: adapter 名 -> 槽位号
+    buffer_id_to_name: 槽位号 -> adapter 名或 _EMPTY
+    _slot_meta:        槽位号 -> (rank, scaling)
     """
 
     def __init__(
@@ -37,7 +36,7 @@ class LoRAMemoryPool:
         dtype: torch.dtype = torch.float16,
         eviction_policy: str = "lru",
     ) -> None:
-        """只建立映射,不分配显存;buffer 由 finalize_buffers 按需创建."""
+        """只建映射,不分配显存;第一次装载某个 module 时才建它的 buffer."""
         self.max_loras_per_batch = max_loras_per_batch
         self.max_lora_rank = max_lora_rank
         self.device = device
@@ -48,11 +47,9 @@ class LoRAMemoryPool:
         self.buffer_id_to_name: List[object] = [_EMPTY] * max_loras_per_batch
         self._slot_meta: Dict[int, Tuple[int, float]] = {}
 
-        # module_key -> 堆叠后的权重,形状 [K, max_rank, in] / [K, out, max_rank]
+        # module_key -> [K, max_rank, in] / [K, out, max_rank]
         self.A_buffers: Dict[str, torch.Tensor] = {}
         self.B_buffers: Dict[str, torch.Tensor] = {}
-
-    # ---------- 查询 ----------
 
     def get_buffer_id(self, name: LoraName) -> int:
         """查 adapter 当前所在的槽位号;不在池里则报错."""
@@ -72,26 +69,6 @@ class LoRAMemoryPool:
         """取单个槽位的 A/B 视图(测试与参考实现用)."""
         a_stack, b_stack = self.get_module_buffers(module_key)
         return a_stack[slot_id], b_stack[slot_id]
-
-    # ---------- 建 buffer ----------
-
-    def finalize_buffers(self, module_shapes: Dict[str, Tuple[int, int]]) -> None:
-        """按各 module 的 (in_dim, out_dim) 分配 GPU buffer;已存在的直接跳过."""
-        for key, (in_dim, out_dim) in module_shapes.items():
-            if key in self.A_buffers:
-                continue
-            self.A_buffers[key] = torch.zeros(
-                (self.max_loras_per_batch, self.max_lora_rank, in_dim),
-                device=self.device,
-                dtype=self.dtype,
-            )
-            self.B_buffers[key] = torch.zeros(
-                (self.max_loras_per_batch, out_dim, self.max_lora_rank),
-                device=self.device,
-                dtype=self.dtype,
-            )
-
-    # ---------- 每个 forward step 的入口 ----------
 
     def prepare_lora_batch(
         self,
@@ -129,10 +106,8 @@ class LoRAMemoryPool:
             scalings=scalings,
         )
 
-    # ---------- 内部:找槽位 / 写权重 ----------
-
     def _alloc_slot(self, keep: Set[LoraName]) -> int:
-        """返回一个可写入的槽位:优先空槽,否则换出不在本 batch 里的 adapter."""
+        """找一个可写入的槽位:优先空槽,否则换出不在本 batch 里的 adapter."""
         for slot in range(self.max_loras_per_batch):
             if self.buffer_id_to_name[slot] is _EMPTY:
                 return slot
@@ -164,6 +139,25 @@ class LoRAMemoryPool:
         self._slot_meta.pop(slot, None)
         return slot
 
+    def ensure_buffers(self, weights: AdapterWeights) -> None:
+        """按该 adapter 用到的 module 形状建 GPU buffer;已存在的跳过(幂等)."""
+        for key in weights.modules:
+            if key in self.A_buffers:
+                continue
+            a_cpu, b_cpu = weights.modules[key]
+            in_dim = int(a_cpu.shape[1])
+            out_dim = int(b_cpu.shape[0])
+            self.A_buffers[key] = torch.zeros(
+                (self.max_loras_per_batch, self.max_lora_rank, in_dim),
+                device=self.device,
+                dtype=self.dtype,
+            )
+            self.B_buffers[key] = torch.zeros(
+                (self.max_loras_per_batch, out_dim, self.max_lora_rank),
+                device=self.device,
+                dtype=self.dtype,
+            )
+
     def _load_name_to_slot(
         self,
         name: LoraName,
@@ -184,12 +178,8 @@ class LoRAMemoryPool:
                 f"adapter {name!r} rank {weights.rank} > max_lora_rank {self.max_lora_rank}"
             )
 
-        # 外部没调 finalize_buffers 时,按当前 adapter 的形状补建(幂等)
-        shapes: Dict[str, Tuple[int, int]] = {}
-        for key in weights.modules:
-            a, b = weights.modules[key]
-            shapes[key] = (int(a.shape[1]), int(b.shape[0]))
-        self.finalize_buffers(shapes)
+        # 池被单独使用(没经过 manager 注册)时,在这里补建
+        self.ensure_buffers(weights)
 
         # 先清空整个槽位,避免复用时残留上一个 adapter 的权重
         for key in self.A_buffers:

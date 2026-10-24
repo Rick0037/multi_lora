@@ -159,27 +159,25 @@ def run_one_request(
     max_new_tokens: int,
     temperature: float,
 ) -> str:
-    """获取适配器引用、预热 GPU pool slot、生成文本并释放引用。"""
-    lora_id = mgr.registry.acquire(adapter_name)
-    try:
-        # 将当前 LoRA 加载到 pool,供后续 PEFT forward 使用
-        info = mgr.prepare_lora_batch([lora_id])
-        label = adapter_name if adapter_name else "base"
-        print(
-            f"  pool slot={info.weight_indices[0]} "
-            f"rank={info.lora_ranks[info.weight_indices[0]]} "
-            f"scalings={info.scalings[:3]}"
-        )
-        return generate_with_peft(
-            mgr.model,
-            tokenizer,
-            prompt,
-            peft_adapter=lora_id,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-        )
-    finally:
-        mgr.registry.release(lora_id)
+    """校验适配器名、预热 GPU pool slot,然后生成文本。"""
+    lora_id = mgr.registry.resolve_names(adapter_name)
+
+    # 将当前 LoRA 加载到 pool,供后续 PEFT forward 使用
+    info = mgr.prepare_lora_batch([lora_id])
+    label = adapter_name if adapter_name else "base"
+    print(
+        f"  pool slot={info.weight_indices[0]} "
+        f"rank={info.lora_ranks[info.weight_indices[0]]} "
+        f"scalings={info.scalings[:3]}"
+    )
+    return generate_with_peft(
+        mgr.model,
+        tokenizer,
+        prompt,
+        peft_adapter=lora_id,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+    )
 
 
 def batched_prefill_check(

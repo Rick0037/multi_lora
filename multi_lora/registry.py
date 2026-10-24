@@ -1,4 +1,4 @@
-"""adapter 元数据注册表:name -> path 映射,外加引用计数."""
+"""adapter 元数据注册表:name -> path 映射."""
 
 from __future__ import annotations
 
@@ -23,21 +23,12 @@ class LoRARegistry:
 
     def __init__(self) -> None:
         self._registry: Dict[str, LoRARef] = {}
-        self._refcount: Dict[str, int] = {}
 
     def register(self, lora_ref: LoRARef) -> None:
         """登记元数据;同名重复注册直接报错."""
         if lora_ref.lora_name in self._registry:
             raise ValueError(f"LoRA name already registered: {lora_ref.lora_name}")
         self._registry[lora_ref.lora_name] = lora_ref
-        self._refcount[lora_ref.lora_name] = 0
-
-    def unregister(self, lora_name: str) -> None:
-        """注销元数据;还有 inflight 引用时报错."""
-        if self._refcount.get(lora_name, 0) > 0:
-            raise ValueError(f"LoRA still in use: {lora_name}")
-        self._registry.pop(lora_name, None)
-        self._refcount.pop(lora_name, None)
 
     def get_by_name(self, lora_name: str) -> LoRARef:
         """按名字查元数据;不存在则报错."""
@@ -69,25 +60,3 @@ class LoRARegistry:
             else:
                 result.append(self.get_by_name(name).lora_name)
         return result
-
-    def acquire(
-        self, lora_names: Union[str, List[Optional[str]], None]
-    ) -> Union[Optional[str], List[Optional[str]]]:
-        """resolve_names + 引用计数 +1(基座不计数)."""
-        result = self.resolve_names(lora_names)
-
-        if isinstance(result, list):
-            names = result
-        else:
-            names = [result]
-
-        for name in names:
-            if name is not None:
-                self._refcount[name] += 1
-
-        return result
-
-    def release(self, lora_name: Optional[str]) -> None:
-        """引用计数 -1(基座无操作)."""
-        if lora_name is not None:
-            self._refcount[lora_name] -= 1

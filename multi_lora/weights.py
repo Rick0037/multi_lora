@@ -61,19 +61,3 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         raise ValueError(f"no LoRA weights found for adapter {adapter_name}")
     assert rank is not None and scaling is not None
     return AdapterWeights(rank=rank, scaling=scaling, modules=modules)
-
-
-def collect_module_shapes(
-    weight_store: Dict[Optional[str], AdapterWeights],
-) -> Dict[str, Tuple[int, int]]:
-    """收集所有 adapter 用到的 module 形状 {key: (in_dim, out_dim)},用于建 GPU buffer."""
-    shapes: Dict[str, Tuple[int, int]] = {}
-    for weights in weight_store.values():
-        for key, (a, b) in weights.modules.items():
-            shape = (int(a.shape[1]), int(b.shape[0]))
-            if key in shapes and shapes[key] != shape:
-                raise ValueError(
-                    f"shape mismatch for {key!r}: {shapes[key]} vs {shape}"
-                )
-            shapes[key] = shape
-    return shapes
