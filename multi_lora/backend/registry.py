@@ -7,15 +7,11 @@ from multi_lora.backend.torch_backend import TorchLoRABackend
 from multi_lora.backend.triton_backend import TritonLoRABackend
 
 
-def get_lora_backend(name: str, **kwargs) -> LoRABackend:
-    """根据字符串名称返回对应 LoRA 后端实例.
-
-    支持别名;torch / pytorch / native;triton。
-    """
-    del kwargs
+def get_lora_backend(name: str) -> LoRABackend:
+    """根据 "torch" / "triton" 返回对应 LoRA 后端实例."""
     name = name.lower().strip()
-    if name in ("torch", "pytorch", "native"):
+    if name == "torch":
         return TorchLoRABackend()
-    if name in ("triton",):
+    if name == "triton":
         return TritonLoRABackend()
     raise ValueError(f"unknown lora backend: {name}; try torch | triton")

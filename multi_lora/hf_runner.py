@@ -57,19 +57,11 @@ def load_causal_lm(
 
     if low_vram:
         # 约 10GB 显存场景;部分层 offload 到 CPU
-        max_memory = {gpu_id: "9GiB", "cpu": "64GiB"}
         model = AutoModelForCausalLM.from_pretrained(
             base_model,
             dtype=dtype,
             device_map="auto",
-            max_memory=max_memory,
-            trust_remote_code=True,
-        )
-    elif device.type == "cpu":
-        model = AutoModelForCausalLM.from_pretrained(
-            base_model,
-            dtype=dtype,
-            device_map={"": device},
+            max_memory={gpu_id: "9GiB", "cpu": "64GiB"},
             trust_remote_code=True,
         )
     else:

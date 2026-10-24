@@ -20,7 +20,6 @@ class TritonLoRABackend(LoRABackend):
     """LoRA A/B 经 Triton segment GEMM 一次 launch 覆盖全 batch 各 segment."""
 
     name = "triton"
-    fuse_output_add = True
 
     def __init__(self) -> None:
         """内嵌 Torch 后端,用于非 CUDA 或 kernel 不可用时的回退."""

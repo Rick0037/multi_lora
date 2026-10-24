@@ -195,16 +195,15 @@ class MultiLoRAManager:
         lora_ids: Sequence[LoraKey],
         *,
         seq_lens: Optional[torch.Tensor] = None,
-    ) -> tuple[KernelInputMetaData, BatchLoRAInfo]:
+    ) -> None:
         """每个 forward step 前;
         注入 backend 元数据 + 各 LinearWithLoRA 的 A/B buffer."""
-        meta, pool_info = self.build_kernel_input_metadata(lora_ids, seq_lens=seq_lens)
+        meta, _ = self.build_kernel_input_metadata(lora_ids, seq_lens=seq_lens)
         self._lora_backend.set_kernel_input_metadata(meta)
         for module_key, wrapper in self.lora_wrappers.items():
             # a_buf [K, max_rank, in]、b_buf [K, out, max_rank];K = max_loras_per_batch(槽位总数)
             a_buf, b_buf = self.pool.get_module_buffers(module_key)
             wrapper.set_lora_info(self._lora_backend, a_buf, b_buf)
-        return meta, pool_info
 
     @torch.inference_mode()
     def forward_with_triton_lora(
