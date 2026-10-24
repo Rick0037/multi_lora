@@ -5,16 +5,14 @@ PEFT 权重 --抽取--> CPU AdapterWeights --装载--> 本模块的 GPU 槽位
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 import torch
 
 from multi_lora.batch_info import BatchLoRAInfo
 from multi_lora.eviction import EvictionPolicy, get_eviction_policy
+from multi_lora.registry import LoraName
 from multi_lora.weights import AdapterWeights
-
-# adapter 名;None 是合法的 key,表示"基座"(不使用任何 LoRA)
-LoraName = Optional[str]
 
 # 空槽标记。不能直接用 None,因为 None 已经被"基座"占用了
 _EMPTY = object()
@@ -25,7 +23,7 @@ class LoRAMemoryPool:
 
     name_to_buffer_id: adapter 名 -> 槽位号
     buffer_id_to_name: 槽位号 -> adapter 名或 _EMPTY
-    _slot_meta:        槽位号 -> (rank, scaling)
+    _slot_rank_scaling: 槽位号 -> (rank, scaling)
     """
 
     def __init__(
@@ -45,7 +43,7 @@ class LoRAMemoryPool:
 
         self.name_to_buffer_id: Dict[LoraName, int] = {}
         self.buffer_id_to_name: List[object] = [_EMPTY] * max_loras_per_batch
-        self._slot_meta: Dict[int, Tuple[int, float]] = {}
+        self._slot_rank_scaling: Dict[int, Tuple[int, float]] = {}
 
         # module_key -> [K, max_rank, in] / [K, out, max_rank]
         self.A_buffers: Dict[str, torch.Tensor] = {}
@@ -95,8 +93,8 @@ class LoRAMemoryPool:
         # rank / scalings 的长度是槽位总数 K,不是 batch 行数
         lora_ranks = [0] * self.max_loras_per_batch
         scalings = [0.0] * self.max_loras_per_batch
-        for slot in self._slot_meta:
-            rank, scaling = self._slot_meta[slot]
+        for slot in self._slot_rank_scaling:
+            rank, scaling = self._slot_rank_scaling[slot]
             lora_ranks[slot] = rank
             scalings[slot] = scaling
 
@@ -112,31 +110,31 @@ class LoRAMemoryPool:
             if self.buffer_id_to_name[slot] is _EMPTY:
                 return slot
 
-        # 本 batch 正在用的槽不能换;基座(None)只能作为最后手段
-        evictable: Set[LoraName] = set()
+        # 候选 = 不在本 batch 里的槽;基座(None)单独记,只有没别的可选时才换它
+        candidates: Set[LoraName] = set()
+        base_is_evictable = False
         for name in self.buffer_id_to_name:
             if name is _EMPTY:
                 continue
             if name in keep:
                 continue
-            evictable.add(name)
+            if name is None:
+                base_is_evictable = True
+            else:
+                candidates.add(name)
 
-        if not evictable:
-            raise ValueError(
-                "no evictable slot: batch needs more adapters than max_loras_per_batch"
-            )
-
-        # 优先换出真正的 adapter;只剩基座槽时才换基座
-        candidates = set(evictable)
-        candidates.discard(None)
         if not candidates:
-            candidates = evictable
+            if not base_is_evictable:
+                raise ValueError(
+                    "no evictable slot: batch needs more adapters than max_loras_per_batch"
+                )
+            candidates.add(None)
 
         victim = self.eviction_policy.select_victim(candidates)
         slot = self.name_to_buffer_id.pop(victim)
         self.eviction_policy.remove(victim)
         self.buffer_id_to_name[slot] = _EMPTY
-        self._slot_meta.pop(slot, None)
+        self._slot_rank_scaling.pop(slot, None)
         return slot
 
     def ensure_buffers(self, weights: AdapterWeights) -> None:
@@ -169,7 +167,7 @@ class LoRAMemoryPool:
         self.buffer_id_to_name[slot] = name
 
         if name is None:
-            self._slot_meta[slot] = (0, 0.0)
+            self._slot_rank_scaling[slot] = (0, 0.0)
             return
 
         weights = weight_store[name]
@@ -193,4 +191,4 @@ class LoRAMemoryPool:
                 b_cpu.to(dtype=self.dtype)
             )
 
-        self._slot_meta[slot] = (weights.rank, weights.scaling)
+        self._slot_rank_scaling[slot] = (weights.rank, weights.scaling)

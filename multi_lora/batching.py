@@ -12,16 +12,17 @@ import torch
 import torch.nn as nn
 from peft import PeftModel
 
-# 一行用哪个 adapter;None = 基座
-LoraKey = Optional[str]
+from multi_lora.registry import LoraName
 
 
-def group_row_indices(lora_ids: Sequence[LoraKey]) -> "OrderedDict[LoraKey, List[int]]":
+def group_row_indices(
+    lora_ids: Sequence[LoraName],
+) -> "OrderedDict[LoraName, List[int]]":
     """按 adapter 把行号分组,保持每组第一次出现的顺序.
 
     例如 ["a", None, "a"] -> {"a": [0, 2], None: [1]}
     """
-    groups: "OrderedDict[LoraKey, List[int]]" = OrderedDict()
+    groups: "OrderedDict[LoraName, List[int]]" = OrderedDict()
     for i, key in enumerate(lora_ids):
         if key not in groups:
             groups[key] = []
@@ -30,7 +31,7 @@ def group_row_indices(lora_ids: Sequence[LoraKey]) -> "OrderedDict[LoraKey, List
 
 
 def validate_lora_batch(
-    lora_ids: Sequence[LoraKey],
+    lora_ids: Sequence[LoraName],
     *,
     max_loras_per_batch: int,
 ) -> bool:
@@ -44,7 +45,7 @@ def forward_logits_grouped(
     *,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
-    lora_ids: Sequence[LoraKey],
+    lora_ids: Sequence[LoraName],
 ) -> torch.Tensor:
     """把行按 adapter 分组,各组跑一次,再按原行号写回 logits."""
     if input_ids.dim() != 2:
@@ -108,7 +109,7 @@ def forward_logits_rowwise_reference(
     *,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
-    lora_ids: Sequence[LoraKey],
+    lora_ids: Sequence[LoraName],
 ) -> torch.Tensor:
     """参考实现:每行单独跑一次 forward,再在 batch 维拼起来."""
     pieces: List[torch.Tensor] = []

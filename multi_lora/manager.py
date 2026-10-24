@@ -16,7 +16,6 @@ from multi_lora.batch_info import (
     to_kernel_input_metadata,
 )
 from multi_lora.batching import (
-    LoraKey,
     forward_logits_grouped as peft_forward_logits_grouped,
     load_peft_multi_adapter,
     validate_lora_batch,
@@ -28,8 +27,8 @@ from multi_lora.model_utils import (
     get_inference_model,
     has_lora_layers,
 )
-from multi_lora.pool import LoRAMemoryPool, LoraName
-from multi_lora.registry import LoRARef, LoRARegistry
+from multi_lora.pool import LoRAMemoryPool
+from multi_lora.registry import LoRARef, LoRARegistry, LoraName
 from multi_lora.weights import AdapterWeights, extract_adapter_weights
 
 
@@ -132,7 +131,7 @@ class MultiLoRAManager:
 
     # ---------- 每个 forward step 的准备 ----------
 
-    def prepare_lora_batch(self, lora_ids: Sequence[LoraKey]) -> BatchLoRAInfo:
+    def prepare_lora_batch(self, lora_ids: Sequence[LoraName]) -> BatchLoRAInfo:
         """把本 batch 用到的 adapter 装进 GPU pool,返回槽位信息."""
         if not validate_lora_batch(
             lora_ids, max_loras_per_batch=self.max_loras_per_batch
@@ -149,7 +148,7 @@ class MultiLoRAManager:
         return self.pool.build_batch_info(list(lora_ids))
 
     def build_kernel_input_metadata(
-        self, lora_ids: Sequence[LoraKey], *, seq_lens: Optional[torch.Tensor] = None
+        self, lora_ids: Sequence[LoraName], *, seq_lens: Optional[torch.Tensor] = None
     ) -> KernelInputMetaData:
         """prepare_lora_batch + 转成 kernel 读取的 GPU 张量."""
         pool_info = self.prepare_lora_batch(lora_ids)
@@ -162,7 +161,7 @@ class MultiLoRAManager:
 
     def _setup_forward_batch(
         self,
-        lora_ids: Sequence[LoraKey],
+        lora_ids: Sequence[LoraName],
         *,
         seq_lens: Optional[torch.Tensor] = None,
     ) -> None:
@@ -180,7 +179,7 @@ class MultiLoRAManager:
     def forward_with_triton_lora(
         self,
         *,
-        lora_ids: Sequence[LoraKey],
+        lora_ids: Sequence[LoraName],
         input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         x: Optional[torch.Tensor] = None,
@@ -215,7 +214,7 @@ class MultiLoRAManager:
         *,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
-        lora_ids: Sequence[LoraKey],
+        lora_ids: Sequence[LoraName],
     ) -> tuple[torch.Tensor, BatchLoRAInfo]:
         """PEFT 分组 forward(golden 参考路径,不走 kernel)."""
         batch_info = self.prepare_lora_batch(lora_ids)

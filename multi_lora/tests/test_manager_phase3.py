@@ -78,7 +78,7 @@ def test_pool_gpu_matches_cpu_store(tiny_mgr):
     slot = mgr.pool.get_buffer_id(id_a)
     key = next(iter(mgr._weight_store[id_a].modules))
     a_gpu, b_gpu = mgr.pool.get_slot_weights(slot, key)
-    rank, _ = mgr.pool._slot_meta[slot]
+    rank, _ = mgr.pool._slot_rank_scaling[slot]
     a_cpu, b_cpu = mgr._weight_store[id_a].modules[key]
     # 有效 rank 范围内 GPU 与 CPU 权重应对齐
     assert torch.allclose(a_gpu[:rank], a_cpu.to(dtype=a_gpu.dtype), rtol=0, atol=1e-6)

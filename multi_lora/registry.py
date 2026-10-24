@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
+# adapter 名;None 是合法的值,表示"基座"(不使用任何 LoRA)
+LoraName = Optional[str]
+
 
 @dataclass(frozen=True)
 class LoRARef:

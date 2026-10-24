@@ -83,7 +83,7 @@ def main():
         acc = yb.clone()
         for i, name in enumerate(lora_ids):
             slot = mgr.pool.get_buffer_id(name)
-            r, s = mgr.pool._slot_meta[slot]
+            r, s = mgr.pool._slot_rank_scaling[slot]
             if r == 0:
                 continue
             a, b = mgr.pool.get_slot_weights(slot, "lin")
