@@ -65,6 +65,8 @@ class LoRAMemoryPool:
         ] * max_loras_per_batch
         # slot -> (rank, scaling),供 build_batch_info 填充 per-slot 数组
         self._slot_meta: Dict[int, Tuple[int, float]] = {}
+        # 上一轮 prepare 触发的驱逐次数,供 build_batch_info 读取
+        self._last_evictions = 0
 
         # module_key -> [K, max_rank, in] / [K, out, max_rank]
         # K = max_loras_per_batch(槽位总数),第一维就是槽位号
@@ -189,7 +191,7 @@ class LoRAMemoryPool:
             weight_indices=weight_indices,
             lora_ranks=ranks,
             scalings=scalings,
-            evictions=getattr(self, "_last_evictions", 0),
+            evictions=self._last_evictions,
         )
 
     def _alloc_slot(self, cur_uids: Set[Uid]) -> int:
