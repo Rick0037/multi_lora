@@ -24,6 +24,7 @@ class _EmptySlot:
 
 
 EMPTY_SLOT = _EmptySlot()
+LoraName = Optional[str]  # None 表示基座模型(无 LoRA 权重)
 
 
 @dataclass
