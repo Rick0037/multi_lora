@@ -86,7 +86,7 @@ def main() -> int:
         lora_ids=peft_keys,
     )
     ok = logits_close(grouped, ref, rtol=2e-3, atol=2e-3)
-    print(f"weight_indices={info.weight_indices} evictions={info.evictions} close={ok}")
+    print(f"weight_indices={info.weight_indices} close={ok}")
 
     id_b = "b"
     # 连续两次 prepare,触发 pool 槽位复用/驱逐

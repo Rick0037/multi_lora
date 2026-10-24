@@ -27,12 +27,11 @@ EMPTY_SLOT = _EmptySlot()
 
 @dataclass
 class BatchLoRAInfo:
-    """单次 batch 的槽位索引与 rank/scaling 元数据;用于 kernel_input_metadata 构造."""
+    """单次 batch 的槽位索引与 rank/scaling 元数据;用于 kernel_input_metadata 构造。"""
 
     weight_indices: List[int]
     lora_ranks: List[int]
     scalings: List[float]
-    evictions: int = 0
 
 
 class LoRAMemoryPool:
@@ -58,7 +57,6 @@ class LoRAMemoryPool:
             EMPTY_SLOT
         ] * max_loras_per_batch
         self._slot_meta: Dict[int, Tuple[int, float]] = {}
-        self._last_evictions = 0
 
         self.A_buffers: Dict[str, torch.Tensor] = {}
         self.B_buffers: Dict[str, torch.Tensor] = {}
@@ -105,38 +103,28 @@ class LoRAMemoryPool:
         *,
         weight_store: Dict[LoraName, AdapterWeights],
     ) -> None:
-        """保证本 batch 的 adapter 都在 GPU;槽不够就驱逐不在本 batch 的,已驻留的跳过。"""
+        """确保 cur_names 全驻留 GPU;按需驱逐 + 装载;外部先调 finalize_buffers。"""
         for name in cur_names:
             self.eviction_policy.mark_used(name)
-
-        evictions_before = self.eviction_policy.eviction_count
-
         for name in cur_names:
             if name in self.name_to_buffer_id:
                 continue
             buffer_id = self._alloc_slot(cur_names)
             self._load_name_to_slot(name, buffer_id, weight_store)
-            self.name_to_buffer_id[name] = buffer_id
-            self.buffer_id_to_name[buffer_id] = name
-
-        self._last_evictions = self.eviction_policy.eviction_count - evictions_before
 
     def build_batch_info(self, lora_ids: List[LoraName]) -> BatchLoRAInfo:
-        """adapter 名 → per-row slot 与 per-slot rank/scaling;weight_indices 长度 = 行数。"""
-        weight_indices: List[int] = []
-        ranks = [0] * self.max_loras_per_batch
-        scalings = [0.0] * self.max_loras_per_batch
+        """根据请求序列,填充每行的槽位号 + rank + scaling;驻留性已由 prepare_lora_batch 保证。"""
+        indices: List[int] = []
+        ranks: List[int] = []
+        scalings: List[float] = []
         for name in lora_ids:
             slot = self.get_buffer_id(name)
-            weight_indices.append(slot)
             r, s = self._slot_meta[slot]
-            ranks[slot] = r
-            scalings[slot] = s
+            indices.append(slot)
+            ranks.append(r)
+            scalings.append(s)
         return BatchLoRAInfo(
-            weight_indices=weight_indices,
-            lora_ranks=ranks,
-            scalings=scalings,
-            evictions=self._last_evictions,
+            weight_indices=indices, lora_ranks=ranks, scalings=scalings
         )
 
     def _alloc_slot(self, cur_names: Set[LoraName]) -> int:
@@ -173,6 +161,8 @@ class LoRAMemoryPool:
         """从 weight_store 取 CPU 权重,拷贝到 GPU 槽 buffer_id;None(基座) 只写 meta。"""
         if name is None:
             self._slot_meta[buffer_id] = (0, 0.0)
+            self.name_to_buffer_id[name] = buffer_id
+            self.buffer_id_to_name[buffer_id] = name
             return
 
         aw = weight_store[name]
@@ -195,3 +185,5 @@ class LoRAMemoryPool:
             b_gpu[:, : aw.rank].copy_(b_cpu.to(dtype=self.dtype))
 
         self._slot_meta[buffer_id] = (aw.rank, aw.scaling)
+        self.name_to_buffer_id[name] = buffer_id
+        self.buffer_id_to_name[buffer_id] = name

@@ -168,7 +168,7 @@ def run_one_request(
         print(
             f"  pool slot={info.weight_indices[0]} "
             f"rank={info.lora_ranks[info.weight_indices[0]]} "
-            f"evictions={info.evictions}"
+            f"scalings={info.scalings[:3]}"
         )
         return generate_with_peft(
             mgr.model,

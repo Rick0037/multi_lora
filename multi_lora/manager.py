@@ -168,7 +168,7 @@ class MultiLoRAManager:
     ) -> KernelInputMetaData:
         """prepare_lora_batch 并转成 GPU 版 KernelInputMetaData."""
         # * pool_info = BatchLoRAInfo(weight_indices=[2, 0, 1], lora_ranks=[0, 64, 16],
-        # * scalings=[0.0, 2.0, 2.0], evictions=0)
+        # * scalings=[0.0, 2.0, 2.0])
         pool_info = self.prepare_lora_batch(lora_ids)
         return kernel_input_metadata_from_pool_batch(
             pool_info,
