@@ -65,7 +65,6 @@ class TritonLoRABackend(LoRABackend):
             return meta
         return KernelInputMetaData(
             bs=meta.bs,
-            num_segments=meta.num_segments,
             seg_indptr=meta.seg_indptr,
             weight_indices=meta.weight_indices.to(torch.int32),
             lora_ranks=meta.lora_ranks,

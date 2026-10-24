@@ -155,16 +155,11 @@ class MultiLoRAManager:
             # * wrapper 和lora wappers中共享一个内存
             self.lora_wrappers[module_key] = wrapper
 
-    def validate_lora_batch(self, lora_ids: Sequence[LoraKey]) -> bool:
-        """校验本 batch 的 distinct adapter 数不超过槽位上限."""
-        # distinct 表示不同的 lora adapter
-        return validate_lora_batch(
-            lora_ids, max_loras_per_batch=self.max_loras_per_batch
-        )
-
     def prepare_lora_batch(self, lora_ids: Sequence[LoraKey]) -> BatchLoRAInfo:
         """把本 batch 涉及的 uid 装入 GPU pool,返回 per-row slot 元数据."""
-        if not self.validate_lora_batch(lora_ids):
+        if not validate_lora_batch(
+            lora_ids, max_loras_per_batch=self.max_loras_per_batch
+        ):
             raise ValueError(
                 f"invalid lora batch: distinct={len(set(lora_ids))} "
                 f"max={self.max_loras_per_batch}"

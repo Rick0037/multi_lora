@@ -28,7 +28,7 @@ class TorchLoRABackend(LoRABackend):
         max_rank = weights.shape[1]
         y = torch.zeros(s_total, max_rank, device=x.device, dtype=x.dtype)
 
-        for seg in range(int(bi.num_segments)):
+        for seg in range(int(bi.bs)):
             # seg_indptr 界定该 segment 在展平 token 维上的 [start, end)
             start = int(bi.seg_indptr[seg].item())
             end = int(bi.seg_indptr[seg + 1].item())
@@ -65,7 +65,7 @@ class TorchLoRABackend(LoRABackend):
         else:
             y = base_output
 
-        for seg in range(int(bi.num_segments)):
+        for seg in range(int(bi.bs)):
             start = int(bi.seg_indptr[seg].item())
             end = int(bi.seg_indptr[seg + 1].item())
             if start >= end:
