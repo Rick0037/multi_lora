@@ -13,6 +13,9 @@ from typing import Optional, Set
 class EvictionPolicy(ABC):
     """槽位满时的 adapter 驱逐策略抽象."""
 
+    def __init__(self) -> None:
+        self.eviction_count = 0
+
     @abstractmethod
     def mark_used(self, uid: Optional[str]) -> None:
         """本 batch 用到 uid 时更新策略状态(LRU 挪到末尾 / FIFO 记录首次出现)."""
@@ -30,9 +33,9 @@ class LRUEvictionPolicy(EvictionPolicy):
     """最近最少使用;淘汰最久未 mark_used 的 adapter."""
 
     def __init__(self) -> None:
+        super().__init__()
         # key 顺序 = 从旧到新;mark_used 时 pop 再 append
         self.access_order: OrderedDict[str, None] = OrderedDict()
-        self.eviction_count = 0
 
     def mark_used(self, uid: Optional[str]) -> None:
         # None(基座)不进入 LRU 链;基座槽没有可重载的 LoRA 权重,不参与"谁值得留在显存"的排序
@@ -61,8 +64,8 @@ class FIFOEvictionPolicy(EvictionPolicy):
     """先进先出;淘汰最早装入 pool 的 adapter."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.insertion_order: OrderedDict[str, None] = OrderedDict()
-        self.eviction_count = 0
 
     def mark_used(self, uid: Optional[str]) -> None:
         # 新 uid 首次出现时加入队尾,之后不再移动

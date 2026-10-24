@@ -71,6 +71,8 @@ class MultiLoRAManager:
         # * 纯洁的model, 没有peft的model 封装,
         self.inference_model = get_inference_model(model)
         self.lora_wrappers: Dict[str, LinearWithLoRA] = {}
+        # 未 convert 时模型里一定还有 PEFT LoraLayer;convert 完成后会重新统计
+        self._has_peft_layers = True
 
     @classmethod
     def from_pretrained(
@@ -148,6 +150,11 @@ class MultiLoRAManager:
             # * wrapper 和lora wappers中共享一个内存
             self.lora_wrappers[module_key] = wrapper
 
+        # 替换完成后统计一次,forward 时不必再遍历整个模型
+        self._has_peft_layers = any(
+            isinstance(m, LoraLayer) for m in self.inference_model.modules()
+        )
+
     def prepare_lora_batch(self, lora_ids: Sequence[LoraKey]) -> BatchLoRAInfo:
         """把本 batch 涉及的 uid 装入 GPU pool,返回 per-row slot 元数据."""
         if not validate_lora_batch(
@@ -170,18 +177,17 @@ class MultiLoRAManager:
 
     def build_kernel_input_metadata(
         self, lora_ids: Sequence[LoraKey], *, seq_lens: Optional[torch.Tensor] = None
-    ) -> tuple[KernelInputMetaData, BatchLoRAInfo]:
-        """prepare_lora_batch + 将 CPU list 元数据转为 GPU KernelInputMetaData."""
+    ) -> KernelInputMetaData:
+        """prepare_lora_batch 并转成 GPU 版 KernelInputMetaData."""
         # * pool_info = BatchLoRAInfo(weight_indices=[2, 0, 1], lora_ranks=[0, 64, 16],
         # * scalings=[0.0, 2.0, 2.0], evictions=0)
         pool_info = self.prepare_lora_batch(lora_ids)
-        meta = kernel_input_metadata_from_pool_batch(
+        return kernel_input_metadata_from_pool_batch(
             pool_info,
             device=self.pool.device,
             dtype=self.pool.dtype,
             seq_lens=seq_lens,
         )
-        return meta, pool_info
 
     def _setup_forward_batch(
         self,
@@ -191,7 +197,7 @@ class MultiLoRAManager:
     ) -> None:
         """每个 forward step 前;
         注入 backend 元数据 + 各 LinearWithLoRA 的 A/B buffer."""
-        meta, _ = self.build_kernel_input_metadata(lora_ids, seq_lens=seq_lens)
+        meta = self.build_kernel_input_metadata(lora_ids, seq_lens=seq_lens)
         self._lora_backend.set_kernel_input_metadata(meta)
         for module_key, wrapper in self.lora_wrappers.items():
             # a_buf [K, max_rank, in]、b_buf [K, out, max_rank];K = max_loras_per_batch(槽位总数)
@@ -227,9 +233,7 @@ class MultiLoRAManager:
 
         # 未 convert 的 PEFT LoraLayer 需 disable,避免与 LinearWithLoRA 双算
         disable_ctx = (
-            self.model.disable_adapter()
-            if self._has_peft_lora_layers()
-            else nullcontext()
+            self.model.disable_adapter() if self._has_peft_layers else nullcontext()
         )
         with disable_ctx:
             # * 区分一下到底是处理一个x, 还是处理整个input_ids
@@ -242,13 +246,6 @@ class MultiLoRAManager:
                 attention_mask=attention_mask,
                 **kwargs,
             )
-
-    def _has_peft_lora_layers(self) -> bool:
-        """检查模型中是否仍存在未替换的 PEFT LoraLayer."""
-        for _, module in self.model.named_modules():
-            if isinstance(module, LoraLayer):
-                return True
-        return False
 
     def forward_logits_grouped(
         self,

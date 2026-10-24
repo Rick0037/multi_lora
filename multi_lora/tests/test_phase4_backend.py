@@ -86,7 +86,7 @@ def test_kernel_input_metadata_tensor_shapes(tiny_linear_mgr):
     """build_kernel_input_metadata 产出的张量形状应符合 segment GEMM 约定。"""
     mgr = tiny_linear_mgr
     id_a = "a"
-    meta, _ = mgr.build_kernel_input_metadata([id_a, None])
+    meta = mgr.build_kernel_input_metadata([id_a, None])
     assert meta.weight_indices.shape == (2,)
     assert meta.lora_ranks.shape[0] == mgr.max_loras_per_batch
     # 两行各一段;indptr = [0, 1, 2]
