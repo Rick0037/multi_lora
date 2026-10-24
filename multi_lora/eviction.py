@@ -1,95 +1,54 @@
-"""LoRA GPU 槽位驱逐策略(LRU / FIFO).
-
-在 pool.prepare_lora_batch 中;当槽位满且需加载新 adapter 时,从可驱逐候选中选 victim。
-"""
+"""槽位满时的换出策略:LRU(最久没用)或 FIFO(最早装入)."""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import Optional, Set
 
+# order 中的顺序就是"越靠前越先被换出"的顺序
+_KINDS = ("lru", "fifo")
 
-class EvictionPolicy(ABC):
-    """槽位满时的 adapter 驱逐策略抽象."""
 
-    def __init__(self) -> None:
+class EvictionPolicy:
+    """记录 adapter 的使用顺序,并据此挑出要被换出的那一个.
+
+    - lru:  每次用到就挪到队尾,队首是最久没用的
+    - fifo: 只在第一次出现时入队,之后顺序不变
+    基座(None)永远不入队:它没有可重载的权重,只能作为最后手段被换出。
+    """
+
+    def __init__(self, kind: str = "lru") -> None:
+        if kind not in _KINDS:
+            raise ValueError(f"unknown eviction policy: {kind}; try lru | fifo")
+        self.kind = kind
+        self.order: "OrderedDict[str, None]" = OrderedDict()
         self.eviction_count = 0
 
-    @abstractmethod
     def mark_used(self, name: Optional[str]) -> None:
-        """本 batch 用到该 adapter 时更新策略状态(LRU 挪到末尾 / FIFO 记录首次出现)."""
-
-    @abstractmethod
-    def select_victim(self, candidates: Set[Optional[str]]) -> Optional[str]:
-        """从 candidates 中选出将被驱逐的 adapter(可为 None=基座槽)."""
-
-    @abstractmethod
-    def remove(self, name: Optional[str]) -> None:
-        """victim 槽回收后,从策略结构中移除该 adapter."""
-
-
-class LRUEvictionPolicy(EvictionPolicy):
-    """最近最少使用;淘汰最久未 mark_used 的 adapter."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        # key 顺序 = 从旧到新;mark_used 时 pop 再 append
-        self.access_order: OrderedDict[str, None] = OrderedDict()
-
-    def mark_used(self, name: Optional[str]) -> None:
-        # None(基座)不进入 LRU 链;基座槽没有可重载的 LoRA 权重,不参与"谁值得留在显存"的排序
-        if name is not None:
-            self.access_order.pop(name, None)
-            self.access_order[name] = None
+        """本 batch 用到该 adapter 时更新顺序."""
+        if name is None:
+            return
+        if self.kind == "lru":
+            self.order.pop(name, None)  # LRU:先删再插 = 挪到队尾
+        self.order[name] = None
 
     def select_victim(self, candidates: Set[Optional[str]]) -> Optional[str]:
-        # 从最旧端扫描,第一个落在 candidates 里的即 victim
-        for name in list(self.access_order.keys()):
+        """从候选里挑出最该换出的 adapter."""
+        for name in self.order:
             if name in candidates:
                 self.eviction_count += 1
                 return name
-        # LRU 链里扫不到候选时,只可能是仅剩基座槽可驱逐(None 不入链),此时兜底返回 None
-        if None in candidates:
+        if None in candidates:  # 只剩基座槽可换
             self.eviction_count += 1
             return None
-        raise RuntimeError(f"no LRU victim in {candidates}")
+        raise RuntimeError(f"no evictable adapter in {candidates}")
 
     def remove(self, name: Optional[str]) -> None:
+        """槽位回收后,把该 adapter 从顺序表中删掉."""
         if name is not None:
-            self.access_order.pop(name, None)
-
-
-class FIFOEvictionPolicy(EvictionPolicy):
-    """先进先出;淘汰最早装入 pool 的 adapter."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.insertion_order: OrderedDict[str, None] = OrderedDict()
-
-    def mark_used(self, name: Optional[str]) -> None:
-        # 新 adapter 首次出现时加入队尾,之后不再移动
-        if name is not None and name not in self.insertion_order:
-            self.insertion_order[name] = None
-
-    def select_victim(self, candidates: Set[Optional[str]]) -> Optional[str]:
-        for name in list(self.insertion_order.keys()):
-            if name in candidates:
-                self.eviction_count += 1
-                return name
-        if None in candidates:
-            self.eviction_count += 1
-            return None
-        raise RuntimeError(f"no FIFO victim in {candidates}")
-
-    def remove(self, name: Optional[str]) -> None:
-        if name is not None:
-            self.insertion_order.pop(name, None)
+            self.order.pop(name, None)
 
 
 def get_eviction_policy(name: str) -> EvictionPolicy:
-    """按名称实例化驱逐策略(lru | fifo)."""
-    policies = {"lru": LRUEvictionPolicy, "fifo": FIFOEvictionPolicy}
-    if name not in policies:
-        raise ValueError(f"unknown eviction policy: {name}")
-    return policies[name]()
+    """按名字创建策略:lru | fifo."""
+    return EvictionPolicy(name.lower().strip())

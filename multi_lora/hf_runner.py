@@ -30,7 +30,9 @@ def pick_device() -> torch.device:
 def pick_dtype(device: torch.device) -> torch.dtype:
     """GPU 上优先 bfloat16(若支持),否则 float16;CPU 用 float32."""
     if device.type == "cuda":
-        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+        return torch.float16
     return torch.float32
 
 
@@ -52,8 +54,10 @@ def load_causal_lm(
     gpu_id: int = 0,
 ) -> torch.nn.Module:
     """加载 Causal LM,可选挂载单个 LoRA adapter."""
-    device = device or pick_device()
-    dtype = dtype or pick_dtype(device)
+    if device is None:
+        device = pick_device()
+    if dtype is None:
+        dtype = pick_dtype(device)
 
     if low_vram:
         # 约 10GB 显存场景;部分层 offload 到 CPU
@@ -104,7 +108,10 @@ def generate_text(
     """对单条 prompt 做 generate 并解码新生成 token."""
     inputs = tokenizer(prompt, return_tensors="pt")
     input_device = model_input_device(model)
-    inputs = {k: v.to(input_device) for k, v in inputs.items()}
+
+    # 把输入搬到模型所在设备
+    for key in inputs:
+        inputs[key] = inputs[key].to(input_device)
 
     gen_kwargs = {
         "max_new_tokens": max_new_tokens,
