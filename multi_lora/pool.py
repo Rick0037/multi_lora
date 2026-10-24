@@ -242,9 +242,9 @@ class LoRAMemoryPool:
 
         # TODO: 槽位复用时只清了本 adapter 拥有的模块,其余模块保留上一个 uid 的残留权重,
         # 缺模块的 adapter(如只有 qkvo)会读到旧 MLP 权重。应在装载前按 slot 清空全部 A/B buffer。
+        if any(key not in self.A_buffers for key in aw.modules):
+            self.finalize_buffers(weight_store)
         for key, (a_cpu, b_cpu) in aw.modules.items():
-            if key not in self.A_buffers:
-                self.finalize_buffers(weight_store)
             a_gpu = self.A_buffers[key][buffer_id]
             b_gpu = self.B_buffers[key][buffer_id]
             a_gpu.zero_()

@@ -25,8 +25,8 @@ class KernelInputMetaData:
     weight_indices: torch.Tensor  # 每个 segment 使用的 pool slot 编号
     lora_ranks: torch.Tensor  # 按 slot 索引的有效 rank(基座 slot 为 0)
     scalings: torch.Tensor  # 按 slot 索引的 LoRA scaling
-    max_len: Optional[int]  # 本 batch 最长 segment,用于 Triton grid  sizing
-    seg_lens: Optional[torch.Tensor]  # 每个 segment 的 token 数
+    max_len: int  # 本 batch 最长 segment,用于 Triton grid  sizing
+    seg_lens: torch.Tensor  # 每个 segment 的 token 数
 
 
 def kernel_input_metadata_from_pool_batch(

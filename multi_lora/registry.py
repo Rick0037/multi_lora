@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from dataclasses import dataclass, fields
 from typing import Dict, List, Optional, Union
 
@@ -46,10 +45,8 @@ class LoRARegistry:
 
     def __init__(self, initial: Optional[List[LoRARef]] = None) -> None:
         """可选传入初始 LoRARef 列表并完成 register."""
-        # lora_name -> LoRARef;OrderedDict 便于 LRU 把最近访问的 name 移到末尾。
-        # value 保存原来的 LoRARef 对象;OrderedDict 默认按插入顺序迭代。
-        # * key -> lora_name,  value -> lora_ref_struct
-        self._registry: OrderedDict[str, LoRARef] = OrderedDict()
+        # lora_name -> LoRARef
+        self._registry: Dict[str, LoRARef] = {}
         # lora_name -> 进行中的请求数(acquire 加一,release 减一)。
         self._counters: Dict[str, int] = {}
         if initial:
@@ -58,9 +55,6 @@ class LoRARegistry:
 
     def register(self, lora_ref: LoRARef) -> None:
         """注册新 adapter;lora_name 不可重复."""
-        # * 注册 none 不能注册ref
-        if lora_ref.lora_name is None:
-            raise ValueError("lora_name is required for register")
         if lora_ref.lora_name in self._registry:
             raise ValueError(f"LoRA name already registered: {lora_ref.lora_name}")
         self._registry[lora_ref.lora_name] = lora_ref

@@ -65,7 +65,7 @@ class MultiLoRAManager:
         )
 
         # adapter 名 -> CPU 权重;这是 pool H2D 拷贝的源
-        self._weight_store: Dict[Optional[str], AdapterWeights] = {}
+        self._weight_store: Dict[str, AdapterWeights] = {}
 
         self._lora_backend: LoRABackend = get_lora_backend(lora_backend)
         # * 纯洁的model, 没有peft的model 封装,
@@ -81,15 +81,12 @@ class MultiLoRAManager:
         max_loras_per_batch: int = 4,
         max_lora_rank: int = 64,
         eviction_policy: str = "lru",
-        first: Optional[str] = None,
         lora_backend: str = "torch",
         lora_target_suffixes: Optional[Sequence[str]] = None,
         convert_lora_layers: bool = True,
     ) -> "MultiLoRAManager":
         """加载多 adapter PEFT 模型并注册到 manager."""
-        names = list(adapters.keys())
-        primary = first or names[0]
-        peft_model = load_peft_multi_adapter(base_model, adapters, first=primary)
+        peft_model = load_peft_multi_adapter(base_model, adapters)
         mgr = cls(
             peft_model,
             max_loras_per_batch=max_loras_per_batch,
@@ -98,22 +95,18 @@ class MultiLoRAManager:
             lora_backend=lora_backend,
             lora_target_suffixes=lora_target_suffixes,  # *("q_proj", "k_proj", "v_proj", "o_proj")
         )
-        for peft_name, path in adapters.items():
-            ref = LoRARef(
-                lora_name=peft_name,
-                lora_path=path,
-            )
-            mgr.register_adapter(ref, peft_adapter_name=peft_name)
+        for name, path in adapters.items():
+            mgr.register_adapter(LoRARef(lora_name=name, lora_path=path))
         if convert_lora_layers:
             mgr.convert_to_lora_layers()  # * peft.lora -> linear with lora
         return mgr
 
-    def register_adapter(self, ref: LoRARef, *, peft_adapter_name: str) -> None:
+    def register_adapter(self, ref: LoRARef) -> None:
         """注册 adapter 元数据,并从 PEFT 抽取 CPU 权重写入 weight_store."""
         self.registry.register(ref)
         # * 抽取的是单个adapter的权重
-        weights = extract_adapter_weights(self.model, peft_adapter_name)
-        self._weight_store[peft_adapter_name] = weights
+        weights = extract_adapter_weights(self.model, ref.lora_name)
+        self._weight_store[ref.lora_name] = weights
         self.pool.finalize_buffers(self._weight_store)
 
     def convert_to_lora_layers(self) -> None:
