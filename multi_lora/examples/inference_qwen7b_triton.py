@@ -151,12 +151,12 @@ def main() -> int:
         max_lora_rank=args.max_lora_rank,
         lora_backend="triton",
         lora_target_suffixes=suffixes,
+        # 先不替换 PEFT 层:--compare-peft 的参考结果必须在这之前算
+        convert_lora_layers=False,
     )
     if not isinstance(mgr._lora_backend, TritonLoRABackend):
         print(f"ERROR: expected TritonLoRABackend, got {type(mgr._lora_backend)}")
         return 1
-
-    print(f"wrapped_modules={len(mgr.lora_wrappers)} backend={mgr._lora_backend.name}")
 
     try:
         enc = {k: v.to(model_input_device(mgr.model)) for k, v in enc.items()}
@@ -164,10 +164,25 @@ def main() -> int:
         lora_names = mgr.registry.normalize_names(adapter_names)
         if not isinstance(lora_names, list):
             lora_names = [lora_names]
-        # import pdb
+        # PEFT 参考必须在 convert_to_lora_layers 之前跑:
+        # 替换之后模型里没有 LoraLayer,set_adapter / disable_adapter 会直接报错
+        peft_logits = None
+        if args.compare_peft:
+            if suffixes is not None:
+                print(
+                    "WARN: --compare-peft requires --all-lora-modules for full parity"
+                )
+            peft_logits, _ = mgr.forward_logits_peft(
+                input_ids=enc["input_ids"],
+                attention_mask=enc["attention_mask"],
+                lora_names=lora_names,
+            )
 
-        # pdb.set_trace()
-        # * lora_names = ['5fb0c686725b471185627313463494b2', None, 'f2885ea1bfec4e0199ccd90ec2128278']
+        # 替换成 LinearWithLoRA,之后才走 Triton 快路径
+        mgr.convert_to_lora_layers()
+        print(
+            f"wrapped_modules={len(mgr.lora_wrappers)} backend={mgr._lora_backend.name}"
+        )
 
         # 整模型 Triton prefill;每行可绑定不同 LoRA
         out = mgr.forward_with_lora(
@@ -187,17 +202,7 @@ def main() -> int:
                 f"  row[{i}] adapter={label} last_logit_norm={last_logits[i].float().norm().item():.4f}"
             )
 
-        if args.compare_peft:
-            if suffixes is not None:
-                print(
-                    "WARN: --compare-peft requires --all-lora-modules for full parity"
-                )
-            # PEFT grouped forward 作为数值参考
-            peft_logits, _ = mgr.forward_logits_peft(
-                input_ids=enc["input_ids"],
-                attention_mask=enc["attention_mask"],
-                lora_names=lora_names,
-            )
+        if peft_logits is not None:
             diff = (last_logits - peft_logits[rows, last]).abs().max().item()
             ok = torch.allclose(
                 last_logits, peft_logits[rows, last], rtol=1e-2, atol=1e-2

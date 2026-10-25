@@ -68,7 +68,7 @@ def convert_lora_layers(
     for full_name, module in list(model.named_modules()):
         if not isinstance(module, LoraLayer):
             continue
-
+        # * 需要同时符合key map中的数据以及前缀中的数据, lora_target_suffixes
         module_key = normalize_module_key(full_name)
         if module_key not in module_keys:
             continue

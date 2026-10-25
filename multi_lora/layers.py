@@ -32,6 +32,9 @@ def lora_delta(
 class LinearWithLoRA(nn.Module):
     """替换 PEFT 的 LoraLayer;forward = 基座 GEMM + 后端算的 LoRA delta."""
 
+    # baseline * x + x * a * b
+    #! 这里的a_buffer, b_buffer 实际上是那个组大 batch 出来的 padding的大矩阵
+    #! backend 计算的时候还需要根据索引去分组算
     def __init__(self, base_layer: nn.Module) -> None:
         """base_layer 是 PEFT 包裹下的原始 Linear;A/B 由 manager 每步注入."""
         super().__init__()
@@ -56,7 +59,7 @@ class LinearWithLoRA(nn.Module):
         y_base = self.base_layer(x)
         if self.backend is None or self.A_buffer is None or self.B_buffer is None:
             return y_base
-
+        #! 这时候是有padding的
         # 输入可能是 [B, S, H] 或 [T, H];统一展平成 [tokens, hidden]
         x_flat = x.reshape(-1, x.shape[-1])
         y_flat = y_base.reshape(-1, y_base.shape[-1])

@@ -62,7 +62,7 @@ def main():
         {"a": str(tmp / "a1"), "b": str(tmp / "a2")},
         max_loras_per_batch=4,
         max_lora_rank=64,
-        lora_backend="torch",
+        lora_backend="triton",
     )
     id_a, id_b = "a", "b"
     # 交替分配 a/b 适配器,模拟 heterogeneous batch

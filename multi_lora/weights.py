@@ -9,7 +9,7 @@ import torch
 from peft import PeftModel
 from peft.tuners.lora import LoraLayer
 
-# module_key -> (A [rank, in], B [out, rank])
+# linear_key -> (A [rank, in], B [out, rank])
 ModuleWeights = Dict[str, Tuple[torch.Tensor, torch.Tensor]]
 
 

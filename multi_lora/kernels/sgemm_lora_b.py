@@ -55,8 +55,9 @@ def _sgemm_lora_b_kernel(
     x_ptrs = (x + seg_start * x_stride_0) + (
         s_offset[:, None] * x_stride_0 + k_offset[None, :] * x_stride_1
     )
+    # weights [K_slots, out_dim, max_rank], 按正常顺序读取
     w_ptrs = (weights + w_index * w_stride_0) + (
-        k_offset[:, None] * w_stride_2 + n_offset[None, :] * w_stride_1
+        n_offset[:, None] * w_stride_1 + k_offset[None, :] * w_stride_2
     )
 
     partial_sum = tl.zeros((BLOCK_S, BLOCK_N), dtype=tl.float32)
@@ -66,11 +67,13 @@ def _sgemm_lora_b_kernel(
             mask=(s_offset[:, None] < seg_len) & (k_offset[None, :] < K - k * BLOCK_K),
             other=0.0,
         )
-        w_tile = tl.load(
+        # 读出来的 w_tile 是 [out_dim, rank], 需要转置成 [rank, out_dim]
+        w_tile_raw = tl.load(
             w_ptrs,
-            mask=(k_offset[:, None] < K - k * BLOCK_K),
+            mask=(n_offset[:, None] < N) & (k_offset[None, :] < K - k * BLOCK_K),
             other=0.0,
         )
+        w_tile = tl.trans(w_tile_raw)  # [out_dim, rank] -> [rank, out_dim]
         partial_sum += tl.dot(x_tile, w_tile)
 
         x_ptrs += BLOCK_K * x_stride_1

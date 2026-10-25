@@ -75,6 +75,7 @@ class MultiLoRAManager:
         self._weight_store: Dict[str, AdapterWeights] = {}
         self._lora_backend: LoRABackend = get_lora_backend(lora_backend)
         self.inference_model = get_inference_model(model)
+        # * 针对base model 可能会被lora替换的记录下来的wrappers, 是linear的引用
         self.lora_wrappers: Dict[str, LinearWithLoRA] = {}
         # 是否还有没被替换掉的 PEFT LoraLayer(需要 disable,否则会重复算 LoRA)
         self._has_peft_layers = has_lora_layers(self.model)
@@ -103,8 +104,10 @@ class MultiLoRAManager:
             lora_backend=lora_backend,
             lora_target_suffixes=lora_target_suffixes,
         )  #! 创建一大堆类内的成员变量
+        #! a,b 先登记
         for name, path in adapters.items():
             mgr.register_adapter(LoRARef(lora_name=name, lora_path=path))
+        #! 一起进行替换, 只做一次, 替换一个并集
         if convert_lora_layers:
             mgr.convert_to_lora_layers()
         return mgr
@@ -117,22 +120,28 @@ class MultiLoRAManager:
         weights = extract_adapter_weights(self.model, ref.lora_name)
         #! 此时有两份, 一份在peft model上面, 一个在weight_store中
         self._weight_store[ref.lora_name] = weights
-        #! 针对每一种weight 都创建了一块空白的pool
+        #! 针对多个adapter的 每一个lora weight 都创建了一块空白的pool, max batch的pool
         self.pool.ensure_buffers(weights)
 
     def convert_to_lora_layers(self) -> None:
         """把目标 LoraLayer 换成 LinearWithLoRA(走 backend 的快路径)."""
         module_keys: Set[str] = set()
+
+        #! _weight_store 中全部替换也没事, 数值上是等价的, 后续证明
         for weights in self._weight_store.values():
+            # print(weights)
             for key in weights.modules:
                 module_keys.add(key)
 
+        # 必须和 extract_adapter_weights 用同一个模型根,否则模块名前缀对不上
         self.lora_wrappers = convert_lora_layers(
-            self.inference_model,
+            self.model,
             module_keys,
             lora_target_suffixes=self.lora_target_suffixes,
         )
         self._has_peft_layers = has_lora_layers(self.inference_model)
+        #! 可能在模型包括了mlp 但是后缀是qkv的情况, 出现了true
+        print("_has_peft_layers", self._has_peft_layers)
 
     # ---------- 每个 forward step 的准备 ----------
 
@@ -146,6 +155,7 @@ class MultiLoRAManager:
                 f"max={self.max_loras_per_batch}"
             )
 
+        # 自动加set了
         self.pool.prepare_lora_batch(
             set(lora_names),  # 本 batch 需要的 adapter(含 None = 基座)
             weight_store=self._weight_store,
@@ -174,8 +184,15 @@ class MultiLoRAManager:
         metadata = self.build_kernel_input_metadata(lora_names, seq_lens=seq_lens)
         self._lora_backend.set_kernel_input_metadata(metadata)
 
+        #! 所有的
         for module_key, wrapper in self.lora_wrappers.items():
+            # 'model.layers.0.self_attn.q_proj
+            # LinearWithLoRA(
+            # (base_layer): Linear(in_features=2560, out_features=4096, bias=False)
+            # )
+            #! [key][max_pre_batch, x, x], 这里在基座模型的索引下面是藏数据
             a_buf, b_buf = self.pool.get_module_buffers(module_key)
+            #! b_buf.shape -> [max_pre_batch, x, x]
             wrapper.set_lora_info(self._lora_backend, a_buf, b_buf)
 
     # ---------- 前向 ----------
@@ -195,17 +212,23 @@ class MultiLoRAManager:
 
         torch 和 triton 两个后端都走这个入口,具体由 lora_backend 决定。
         """
+        # * (1) 看还有多少的序列
         if seq_lens is None and attention_mask is not None:
-            # prefill:每条序列的有效 token 数 = mask 求和
             seq_lens = attention_mask.sum(dim=1)
 
+        # * (2) 准备 batch:装槽位 + 生成 kernel 元数据 + 把 buffer 注入每个 wrapper(linear)
+        # lora_names 本次进来的 names ['a', None, 'b']
         self._setup_forward_batch(lora_names, seq_lens=seq_lens)
 
         # 没被替换的 PEFT LoraLayer 要关掉,避免和 LinearWithLoRA 重复计算
+        # * (3) 关掉没被替换的 PEFT 层(避免算两遍)
+        #! 如果微调了包括MLP，启动suffix 需要是全部的linear，不然就有错误
         if self._has_peft_layers:
             context = self.model.disable_adapter()
         else:
             context = nullcontext()
+
+        # * (4) forward
         with context:
             if x is not None:
                 return self.inference_model(x, **kwargs)

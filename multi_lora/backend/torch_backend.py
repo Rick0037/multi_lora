@@ -28,6 +28,11 @@ class TorchLoRABackend(LoRABackend):
         max_rank = weights.shape[1]
         y = torch.zeros(s_total, max_rank, device=x.device, dtype=x.dtype)
 
+        # * seg_lens-> tensor([13, 13, 22], device='cuda:0')
+        # * seg_indptr-> tensor([ 0, 13, 26, 48], device='cuda:0', dtype=torch.int32)
+        # * 目前就是纯平铺。`bs = 3` 就循环 3 次，
+        # * 即使第 0 行和第 1 行都用 adapter `'a'`（都指向 `slot=1`），也会分别算两次 `x[0:13] @ A` 和 `x[13:26] @ A`，没有合并。
+        # * 想要合并需要改kernel
         for seg in range(int(bi.bs)):
             # seg_indptr 界定该 segment 在展平 token 维上的 [start, end)
             start = int(bi.seg_indptr[seg].item())
