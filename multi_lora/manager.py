@@ -213,8 +213,13 @@ class MultiLoRAManager:
         torch 和 triton 两个后端都走这个入口,具体由 lora_backend 决定。
         """
         # * (1) 看还有多少的序列
+        # x 是 padded 的 [B, S, H],展平后第 i 行占 [i*S, (i+1)*S)
+        # 所以每段长度必须按 padded 的 S 算,不能用 mask.sum() 的有效长度
         if seq_lens is None and attention_mask is not None:
-            seq_lens = attention_mask.sum(dim=1)
+            batch_size, seq_len = attention_mask.shape
+            seq_lens = torch.full(
+                (batch_size,), seq_len, device=attention_mask.device, dtype=torch.int32
+            )
 
         # * (2) 准备 batch:装槽位 + 生成 kernel 元数据 + 把 buffer 注入每个 wrapper(linear)
         # lora_names 本次进来的 names ['a', None, 'b']

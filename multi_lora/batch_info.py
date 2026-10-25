@@ -50,8 +50,9 @@ def to_kernel_input_metadata(
 ) -> KernelInputMetaData:
     """把 CPU list 转成 GPU 张量。
 
-    seq_lens 只在 prefill 传:表示展平后 x 里每段有几个 token。
-    因此 x 必须是紧密排列的,不能有 padding。
+    seq_lens 只在 prefill 传:表示 x 展平后每段占多少行。
+    seg_lens 必须和 x 的实际布局一致(padded 输入就是 padded 长度),
+    kernel 按 seg_indptr 取行,不对会读错位置。
     """
     bs = len(pool_batch.weight_indices)
 
