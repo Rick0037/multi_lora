@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase-1 smoke: Qwen2-7B-Instruct + one or two PEFT LoRA adapters (serial runs)."""
+"""Phase-1 smoke: Qwen3-4B-Instruct + one or two PEFT LoRA adapters (serial runs)."""
 
 from __future__ import annotations
 
@@ -23,13 +23,6 @@ from multi_lora.hf_runner import (  # noqa: E402
     pick_dtype,
     release_model,
 )
-
-# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# # Standard PEFT LoRA (rank=32, no modules_to_save); Qwen2-7B family.
-# DEFAULT_LORA_1 = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# # Second adapter for serial switch; set empty via --lora-2 "" to skip.
-# DEFAULT_LORA_2 = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
-
 
 DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
 # rank 16 只训练了qkvo
@@ -66,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--low-vram",
         action="store_true",
-        help="Offload part of the 7B model to CPU (for ~10GB free GPU).",
+        help="Offload part of the 4B model to CPU (for ~10GB free GPU).",
     )
     p.add_argument(
         "--gpu-id", type=int, default=1, help="GPU index when using --low-vram"

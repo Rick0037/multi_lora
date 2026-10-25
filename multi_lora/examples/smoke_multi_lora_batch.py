@@ -27,11 +27,6 @@ from multi_lora.hf_runner import (  # noqa: E402
     release_model,
 )
 
-# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
-
-
 DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
 # rank 16 只训练了qkvo
 ADAPTER_A = "GestaltLabs/Jeff-1"

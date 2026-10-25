@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qwen2-7B-Instruct + multi-LoRA text generation (one load, multiple adapters).
+"""Qwen3-4B-Instruct + multi-LoRA text generation (one load, multiple adapters).
 
 Uses MultiLoRAManager: registry + GPU weight pool + PEFT set_adapter for
 generation. Distinct adapters in one process share the same base weights.
@@ -7,13 +7,13 @@ generation. Distinct adapters in one process share the same base weights.
 Example (container, ~24GB GPU or use --low-vram on ~10GB):
 
     cd /home/multi_lora
-    python multi_lora/examples/inference_qwen7b_lora.py
+    python multi_lora/examples/inference_qwen4b_lora.py
 
-    python multi_lora/examples/inference_qwen7b_lora.py --low-vram --gpu-id 0 \\
+    python multi_lora/examples/inference_qwen4b_lora.py --low-vram --gpu-id 0 \\
         --max-new-tokens 64
 
     # Custom prompts: adapter name per line (empty = base), then prompt text until blank line
-    python multi_lora/examples/inference_qwen7b_lora.py --prompts-file my_prompts.txt
+    python multi_lora/examples/inference_qwen4b_lora.py --prompts-file my_prompts.txt
 """
 
 from __future__ import annotations
@@ -41,11 +41,6 @@ from multi_lora.hf_runner import (  # noqa: E402
     release_model,
 )
 from multi_lora.manager import MultiLoRAManager  # noqa: E402
-
-# DEFAULT_BASE = "Qwen/Qwen2-7B-Instruct"
-# ADAPTER_A = "FuturisticVibes/Qwen2-7B-TestInstructFinetune-LORA"
-# ADAPTER_B = "Bibaolong/Context-Faithful-Qwen2-7B-Instruct"
-
 
 DEFAULT_BASE = "Qwen/Qwen3-4B-Instruct-2507"
 # rank 16 只训练了qkvo
@@ -206,7 +201,7 @@ def batched_prefill_check(
 
 
 def main() -> int:
-    """加载 Qwen2-7B 与 multi-LoRA manager,逐条请求生成并可选 batched prefill 校验。"""
+    """加载 Qwen3-4B 与 multi-LoRA manager,逐条请求生成并可选 batched prefill 校验。"""
     args = parse_args()
     requests = (
         load_requests(args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
@@ -220,7 +215,7 @@ def main() -> int:
         device = pick_device()
     dtype = pick_dtype(device)
 
-    print("multi_lora Qwen2-7B multi-LoRA inference")
+    print("multi_lora Qwen3-4B multi-LoRA inference")
     print(
         f"base={args.base_model} device={device} dtype={dtype} low_vram={args.low_vram}"
     )
