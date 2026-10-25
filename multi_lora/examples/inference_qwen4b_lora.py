@@ -96,6 +96,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="After generation, run one grouped prefill on all prompts (sanity check)",
     )
+    p.add_argument(
+        "--triton",
+        action="store_true",
+        help="Also生成一遍 Triton kernel 路径,并与 PEFT 分组结果逐 token 对比",
+    )
     return p.parse_args()
 
 
@@ -143,6 +148,147 @@ def generate_with_peft(
             max_new_tokens=max_new_tokens,
             temperature=temperature,
         )
+
+
+@torch.inference_mode()
+def greedy_decode_peft(
+    model: PeftModel,
+    tokenizer,
+    prompt: str,
+    *,
+    peft_adapter: Optional[str],
+    max_new_tokens: int,
+) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    """PEFT 路径逐步贪心解码;作为 Triton 对比的参考,返回 (新 token, 每步 logits)."""
+    enc = tokenizer(prompt, return_tensors="pt")
+    device = model_input_device(model)
+    cur_ids = enc["input_ids"].to(device)
+    cur_mask = enc["attention_mask"].to(device)
+
+    # base 行要临时关掉 LoRA;adapter 行切到对应 adapter
+    if peft_adapter is None:
+        ctx = model.disable_adapter()
+    else:
+        model.set_adapter(peft_adapter)
+        ctx = nullcontext()
+
+    new_ids: List[torch.Tensor] = []
+    step_logits: List[torch.Tensor] = []
+    past = None
+    with ctx:
+        for _ in range(max_new_tokens):
+            out = model(
+                input_ids=cur_ids,
+                attention_mask=cur_mask,
+                past_key_values=past,
+                use_cache=True,
+                return_dict=True,
+            )
+            past = out.past_key_values
+            logits = out.logits[:, -1]
+            step_logits.append(logits)
+            nxt = logits.argmax(dim=-1, keepdim=True)
+            new_ids.append(nxt)
+            if int(nxt.item()) == tokenizer.eos_token_id:
+                break
+            cur_ids = nxt
+            cur_mask = torch.cat(
+                [cur_mask, cur_mask.new_ones((cur_mask.size(0), 1))], dim=1
+            )
+    return torch.cat(new_ids, dim=1)[0], step_logits
+
+
+@torch.inference_mode()
+def greedy_decode_triton(
+    mgr: MultiLoRAManager,
+    tokenizer,
+    prompt: str,
+    *,
+    lora_name: Optional[str],
+    max_new_tokens: int,
+) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    """Triton 路径逐步贪心解码:prefill 和 decode 都走 forward_with_lora."""
+    enc = tokenizer(prompt, return_tensors="pt")
+    device = model_input_device(mgr.model)
+    ids = enc["input_ids"].to(device)
+    mask = enc["attention_mask"].to(device)
+    names = [lora_name]
+
+    out = mgr.forward_with_lora(
+        input_ids=ids,
+        attention_mask=mask,
+        lora_names=names,
+        use_cache=True,
+    )
+    past = out.past_key_values
+    logits = out.logits[:, -1]
+
+    new_ids: List[torch.Tensor] = []
+    step_logits: List[torch.Tensor] = []
+    # decode 阶段每行只有 1 个 token;显式传 seq_lens 才走 decode 分支,
+    # 否则 manager 会按 attention_mask 的列数当成 prefill 段长
+    decode_lens = torch.ones(ids.size(0), device=device, dtype=torch.int32)
+    for _ in range(max_new_tokens):
+        step_logits.append(logits)
+        nxt = logits.argmax(dim=-1, keepdim=True)
+        new_ids.append(nxt)
+        if int(nxt.item()) == tokenizer.eos_token_id:
+            break
+        out = mgr.forward_with_lora(
+            input_ids=nxt,
+            attention_mask=None,
+            seq_lens=decode_lens,
+            lora_names=names,
+            past_key_values=past,
+            use_cache=True,
+        )
+        past = out.past_key_values
+        logits = out.logits[:, -1]
+    return torch.cat(new_ids, dim=1)[0], step_logits
+
+
+def compare_generations(
+    label: str,
+    tokenizer,
+    peft_ids: torch.Tensor,
+    peft_logits: List[torch.Tensor],
+    tri_ids: torch.Tensor,
+    tri_logits: List[torch.Tensor],
+) -> bool:
+    """逐 token 与逐步 logits 对比;分歧处打印 PEFT 的 top1-top2 间距."""
+    n = min(len(peft_logits), len(tri_logits))
+    step_diffs = [(peft_logits[i] - tri_logits[i]).abs().max().item() for i in range(n)]
+    max_diff = max(step_diffs) if step_diffs else 0.0
+    mean_diff = sum(step_diffs) / len(step_diffs) if step_diffs else 0.0
+
+    same = torch.equal(peft_ids, tri_ids)
+    print(
+        f"  [{label}] tokens_match={same} peft_len={peft_ids.numel()} "
+        f"triton_len={tri_ids.numel()}"
+    )
+    print(
+        f"  [{label}] per-step logits max_abs_diff={max_diff:.6g} "
+        f"mean_abs_diff={mean_diff:.6g}"
+    )
+    print(f"  [{label}] step_diffs=" + " ".join(f"{d:.3g}" for d in step_diffs))
+
+    if same:
+        return True
+
+    # 分歧位置:看 PEFT 参考的 top1-top2 间距,判断是不是近似平票被 bf16 噪声翻盘
+    m = min(peft_ids.numel(), tri_ids.numel())
+    bad = (peft_ids[:m] != tri_ids[:m]).nonzero()
+    first_bad = int(bad[0, 0]) if bad.numel() else m
+    if first_bad < len(peft_logits):
+        top2 = peft_logits[first_bad].topk(2, dim=-1).values[0]
+        gap = (top2[0] - top2[1]).item()
+        p_tok = tokenizer.decode([int(peft_ids[first_bad])])
+        t_tok = tokenizer.decode([int(tri_ids[first_bad])])
+        print(
+            f"  [{label}] first_mismatch at token {first_bad}: "
+            f"peft={p_tok!r} triton={t_tok!r} peft_top1_top2_gap={gap:.4g}"
+        )
+    return False
 
 
 def run_one_request(
@@ -236,6 +382,11 @@ def main() -> int:
         {"a": args.adapter_a, "b": args.adapter_b},
         max_loras_per_batch=args.max_loras_per_batch,
         max_lora_rank=args.max_lora_rank,
+        # --triton 时用 Triton kernel 算 LoRA delta,否则走 torch 参考实现
+        lora_backend="triton" if args.triton else "torch",
+        # 本脚本走 PEFT 原生生成路径(set_adapter / disable_adapter),
+        # 需要保留 LoraLayer,不能换成 LinearWithLoRA
+        convert_lora_layers=False,
     )
 
     try:
@@ -254,8 +405,62 @@ def main() -> int:
             )
             print(f"--- completion ---\n{completion}\n")
 
+        # PEFT 参考必须在替换层之前跑:替换后模型里没有 LoraLayer,
+        # set_adapter / disable_adapter 会直接报错
+        peft_refs: List[Tuple[torch.Tensor, List[torch.Tensor]]] = []
+        if args.triton:
+            for adapter_name, prompt in requests:
+                lora_id = mgr.registry.normalize_names(adapter_name)
+                peft_refs.append(
+                    greedy_decode_peft(
+                        mgr.model,
+                        tokenizer,
+                        prompt,
+                        peft_adapter=lora_id,
+                        max_new_tokens=args.max_new_tokens,
+                    )
+                )
+
         if args.batched_prefill:
             batched_prefill_check(mgr, tokenizer, requests)
+
+        if args.triton:
+            mgr.convert_to_lora_layers()
+            print(
+                f"\n--- Triton kernel generation vs PEFT (greedy) "
+                f"wrapped_modules={len(mgr.lora_wrappers)} "
+                f"backend={mgr._lora_backend.name} ---"
+            )
+            all_match = True
+            for i, (adapter_name, prompt) in enumerate(requests):
+                label = adapter_name if adapter_name else "base"
+                lora_id = mgr.registry.normalize_names(adapter_name)
+                tri_ids, tri_step = greedy_decode_triton(
+                    mgr,
+                    tokenizer,
+                    prompt,
+                    lora_name=lora_id,
+                    max_new_tokens=args.max_new_tokens,
+                )
+                peft_ids, peft_step = peft_refs[i]
+                print(f"\n=== [{i}] adapter={label} ===")
+                print(
+                    "  peft  : "
+                    + tokenizer.decode(peft_ids, skip_special_tokens=True)
+                    .strip()
+                    .replace("\n", " ")
+                )
+                print(
+                    "  triton: "
+                    + tokenizer.decode(tri_ids, skip_special_tokens=True)
+                    .strip()
+                    .replace("\n", " ")
+                )
+                match = compare_generations(
+                    label, tokenizer, peft_ids, peft_step, tri_ids, tri_step
+                )
+                all_match = all_match and match
+            print(f"\ntriton_vs_peft tokens_all_match={all_match}")
 
         print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
     finally:
