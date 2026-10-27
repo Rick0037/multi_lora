@@ -70,6 +70,7 @@ class _GpuBuffers:
 
         for key in weights.modules:
             a_cpu, b_cpu = weights.modules[key]
+            #! 每个人只写自己slot位置的
             self.A[key][slot, : weights.rank].copy_(a_cpu.to(dtype=self.dtype))
             self.B[key][slot, :, : weights.rank].copy_(b_cpu.to(dtype=self.dtype))
 

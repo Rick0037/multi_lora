@@ -9,7 +9,6 @@ Example::
 
     cd /home/multi_lora
     python multi_lora/examples/inference_qwen4b_triton.py
-    python multi_lora/examples/inference_qwen4b_triton.py --low-vram --gpu-id 0
 """
 
 from __future__ import annotations
@@ -75,8 +74,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prompts-file", type=Path, default=None)
     p.add_argument("--max-loras-per-batch", type=int, default=3)
     p.add_argument("--max-lora-rank", type=int, default=64)
-    p.add_argument("--low-vram", action="store_true")
-    p.add_argument("--gpu-id", type=int, default=0)
     p.add_argument(
         "--all-lora-modules",
         action="store_true",
@@ -141,8 +138,6 @@ def main() -> int:
         args.base_model,
         device=device,
         dtype=dtype,
-        low_vram=args.low_vram,
-        gpu_id=args.gpu_id,
     )
     mgr = MultiLoRAManager.from_pretrained(
         base,

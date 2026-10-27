@@ -2,6 +2,7 @@
   "include": [
     "multi_lora",
   ],
+  "pythonPath": ".venv/bin/python",
   "exclude": [
     "**/.venv",
     "**/__pycache__",

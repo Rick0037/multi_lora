@@ -71,7 +71,9 @@ class MultiLoRAManager:
             dtype=next(model.parameters()).dtype,
             eviction_policy=eviction_policy,
         )
-
+        # * <lora_name, AdapterWeights>
+        # * AdapterWeights = rank, scale, dic
+        # * dic <weight_key, lora_a, lora_b>
         self._weight_store: Dict[str, AdapterWeights] = {}
         self._lora_backend: LoRABackend = get_lora_backend(lora_backend)
         self.inference_model = get_inference_model(model)
@@ -190,9 +192,9 @@ class MultiLoRAManager:
             # LinearWithLoRA(
             # (base_layer): Linear(in_features=2560, out_features=4096, bias=False)
             # )
-            #! [key][max_pre_batch, x, x], 这里在基座模型的索引下面是藏数据
+            #! pool中是[weight_key][max_pre_batch, x, x], 这里在基座模型的索引下面是藏数据
             a_buf, b_buf = self.pool.get_module_buffers(module_key)
-            #! b_buf.shape -> [max_pre_batch, x, x]
+            #! b_buf.shape -> [max_pre_batch, x, x],
             wrapper.set_lora_info(self._lora_backend, a_buf, b_buf)
 
     # ---------- 前向 ----------

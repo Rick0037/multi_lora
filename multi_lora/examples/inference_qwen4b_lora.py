@@ -4,12 +4,12 @@
 Uses MultiLoRAManager: registry + GPU weight pool + PEFT set_adapter for
 generation. Distinct adapters in one process share the same base weights.
 
-Example (container, ~24GB GPU or use --low-vram on ~10GB):
+Example (container, ~24GB GPU):
 
     cd /home/multi_lora
     python multi_lora/examples/inference_qwen4b_lora.py
 
-    python multi_lora/examples/inference_qwen4b_lora.py --low-vram --gpu-id 0 \\
+    python multi_lora/examples/inference_qwen4b_lora.py \\
         --max-new-tokens 64
 
     # Custom prompts: adapter name per line (empty = base), then prompt text until blank line
@@ -88,9 +88,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--max-loras-per-batch", type=int, default=3)
     p.add_argument("--max-lora-rank", type=int, default=64)
-    p.add_argument("--low-vram", action="store_true")
-    p.add_argument("--gpu-id", type=int, default=0)
-    p.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     p.add_argument(
         "--batched-prefill",
         action="store_true",
@@ -353,18 +350,11 @@ def main() -> int:
         load_requests(args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
     )
 
-    if args.device == "cpu":
-        device = torch.device("cpu")
-    elif args.device == "cuda":
-        device = pick_device()
-    else:
-        device = pick_device()
+    device = pick_device()
     dtype = pick_dtype(device)
 
     print("multi_lora Qwen3-4B multi-LoRA inference")
-    print(
-        f"base={args.base_model} device={device} dtype={dtype} low_vram={args.low_vram}"
-    )
+    print(f"base={args.base_model} device={device} dtype={dtype}")
     print(f"adapters: a={args.adapter_a}")
     print(f"          b={args.adapter_b}")
     print(f"requests={len(requests)}")
@@ -374,8 +364,6 @@ def main() -> int:
         args.base_model,
         device=device,
         dtype=dtype,
-        low_vram=args.low_vram,
-        gpu_id=args.gpu_id,
     )
     mgr = MultiLoRAManager.from_pretrained(
         base,
