@@ -266,4 +266,4 @@ pageable 内存 + 默认流同步 `copy_`，且在 forward 之前串行执行。
 6. P1-3（复用中间张量）
 7. P0-5（常驻 metadata）→ P2-1（CUDA Graph）
 8. P1-4（stacked LoRA）
-9. P2-2（异步 H2D）
+9. P2-2（异步 H2D, base model & lora model overlap）
