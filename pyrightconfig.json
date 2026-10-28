@@ -1,6 +1,6 @@
 {
   "include": [
-    "multi_lora",
+    "multi_lora"
   ],
   "pythonPath": ".venv/bin/python",
   "exclude": [
