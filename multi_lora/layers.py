@@ -9,6 +9,15 @@ import torch.nn as nn
 
 from multi_lora.backend.base import LoRABackend
 
+# 进程级开关:关掉后 LinearWithLoRA 只跑基座 GEMM,用于测「不含 LoRA」的基线耗时
+LORA_ENABLED = True
+
+
+def set_lora_enabled(enabled: bool) -> None:
+    """全局开/关 LoRA delta 计算;同一进程同一模型,只跳过 delta 那一步."""
+    global LORA_ENABLED
+    LORA_ENABLED = enabled
+
 
 def lora_delta(
     x: torch.Tensor,
@@ -57,11 +66,14 @@ class LinearWithLoRA(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """先算基座输出,再把 LoRA delta 累加进去."""
         y_base = self.base_layer(x)
+        if not LORA_ENABLED:
+            return y_base
         if self.backend is None or self.A_buffer is None or self.B_buffer is None:
             return y_base
         #! 这时候是有padding的
         # 输入可能是 [B, S, H] 或 [T, H];统一展平成 [tokens, hidden]
         x_flat = x.reshape(-1, x.shape[-1])
         y_flat = y_base.reshape(-1, y_base.shape[-1])
-        y_flat = self.backend.apply_lora(x_flat, self.A_buffer, self.B_buffer, y_flat)
+        y_flat = self.backend.apply_lora(
+            x_flat, self.A_buffer, self.B_buffer, y_flat)
         return y_flat.reshape(y_base.shape)

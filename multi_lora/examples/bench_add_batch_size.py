@@ -6,7 +6,7 @@ batch 内按 i % 3 循环分配,保证 distinct adapter 数不超过池容量,
 于是一次跑同时覆盖「异构 rank」和「batch  scaling」两件事。
 
 计时方式与 bench_qwen4b_e2e.py 一致:prefill 重复多次取均值(TTFT),
-decode 用 CUDA event 逐步记录(TPOT)。
+decode 用 CUDA event 逐步记录、多轮取均值(TPOT)。
 
 Example::
 
@@ -20,6 +20,7 @@ import argparse
 import statistics
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List
 
@@ -37,6 +38,7 @@ from multi_lora.hf_runner import (  # noqa: E402
     pick_dtype,
     release_model,
 )
+from multi_lora.layers import set_lora_enabled  # noqa: E402
 from multi_lora.manager import MultiLoRAManager  # noqa: E402
 
 BASE = "Qwen/Qwen3-4B-Instruct-2507"
@@ -58,16 +60,18 @@ ADAPTERS: Dict[str, str] = {
 }
 
 # 名字 -> rank,只用于打印;实际 rank 由 pool 从权重里读
-ADAPTER_RANKS: Dict[str, int] = {"a": 16, "b": 64, "r8": 8, "r16": 16, "r32": 32}
+ADAPTER_RANKS: Dict[str, int] = {
+    "a": 16, "b": 64, "r8": 8, "r16": 16, "r32": 32}
 
 PROMPT = "user\nList three countries and their capitals.\n" "assistant\n"
 
 # 固定实验配置:不再做成命令行参数,避免误调导致两次结果不可比
-# BATCHES = [1, 2, 4, 8, 16, 32, 64, 128]  # batch size 扫描点
-BATCHES = [128]  # batch size 扫描点
+BATCHES = [1, 2, 4, 8, 16, 32, 64, 128]  # batch size 扫描点
+# BATCHES = [128]  # batch size 扫描点
 NUM_DECODE = 16  # decode 步数
-PREFILL_ITERS = 3  # prefill 重复次数
-WARMUP = 2  # 正式计时前的 decode 预热步数
+PREFILL_ITERS = 5  # prefill 重复次数
+DECODE_REPEAT = 3  # decode 重复轮数,每轮重新 prefill 拿干净 cache
+WARMUP = 3  # 正式计时前的 decode 预热步数
 SEED = 1234  # 固定随机种子
 ATOL = 1e-3  # 绝对判据 allclose(atol)
 RTOL = 5e-3  # 相对判据 mean_rel < rtol
@@ -175,7 +179,8 @@ def grouped_decode(mgr, states, names):
         out = mgr.forward_with_lora(
             input_ids=next_ids,
             attention_mask=None,
-            seq_lens=torch.ones(idx.numel(), device=idx.device, dtype=torch.int32),
+            seq_lens=torch.ones(
+                idx.numel(), device=idx.device, dtype=torch.int32),
             lora_names=[adapter] * idx.numel(),
             past_key_values=past,
             use_cache=True,
@@ -193,6 +198,98 @@ def grouped_decode(mgr, states, names):
             (idx, out.past_key_values, logits.argmax(dim=-1, keepdim=True))
         )
     return out_logits, new_states
+
+
+@contextmanager
+def lora_disabled():
+    """期间全局关掉 LoRA delta,退出时必然恢复,异常也不会漏状态."""
+    set_lora_enabled(False)
+    try:
+        yield
+    finally:
+        set_lora_enabled(True)
+
+
+def measure_both(mgr, input_ids, attention_mask, names, decode_lens, fn):
+    """同一 batch 开/关 LoRA 各跑一次 fn,返回 (带 LoRA, 基座, 净开销).
+
+    预热与计时口径完全一致,三项都是 fn 的同构返回值(标量或元组均可)。
+    """
+    with_lora = fn(mgr, input_ids, attention_mask, names, decode_lens)
+    with lora_disabled():
+        base = fn(mgr, input_ids, attention_mask, names, decode_lens)
+    if isinstance(with_lora, tuple):
+        net = tuple(a - b for a, b in zip(with_lora, base))
+    else:
+        net = with_lora - base
+    return with_lora, base, net
+
+
+@torch.inference_mode()
+def measure_ttft_tpot(mgr, input_ids, attention_mask, names, decode_lens):
+    """跑 prefill + DECODE_REPEAT 轮 decode,返回 (ttft_ms, tpot_ms) 均值.
+
+    供 measure_both 在开/关 LoRA 两种状态下各调一次。
+    """
+
+    def prefill():
+        """一次整 batch prefill,带 KV cache."""
+        return mgr.forward_with_lora(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            lora_names=names,
+            use_cache=True,
+        )
+
+    # 预热:排除 Triton 首次编译与显存分配
+    out = prefill()
+    past = out.past_key_values
+    next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
+    for _ in range(WARMUP):
+        out = mgr.forward_with_lora(
+            input_ids=next_ids,
+            attention_mask=None,
+            seq_lens=decode_lens,
+            lora_names=names,
+            past_key_values=past,
+            use_cache=True,
+        )
+        past = out.past_key_values
+        next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
+
+    prefill_times = []
+    for _ in range(PREFILL_ITERS):
+        ms, _ = cuda_ms(prefill)
+        prefill_times.append(ms)
+
+    # decode:每轮重新 prefill 拿干净 cache(否则 past 会一直变长),逐步记 event
+    step_times = []
+    for _ in range(DECODE_REPEAT):
+        out = prefill()
+        past = out.past_key_values
+        next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
+        for _ in range(NUM_DECODE):
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            out = mgr.forward_with_lora(
+                input_ids=next_ids,
+                attention_mask=None,
+                seq_lens=decode_lens,
+                lora_names=names,
+                past_key_values=past,
+                use_cache=True,
+            )
+            end.record()
+            step_times.append((start, end))
+            past = out.past_key_values
+            next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
+    torch.cuda.synchronize()
+
+    return (
+        statistics.fmean(prefill_times),
+        statistics.fmean(s.elapsed_time(e) for s, e in step_times),
+    )
 
 
 def check_close(label, a, b):
@@ -230,14 +327,17 @@ def verify_paths(mgr, input_ids, attention_mask, names):
     return rows
 
 
-def bench_paths(mgr, input_ids, attention_mask, names):
+def bench_paths(mgr, input_ids, attention_mask, names, decode_lens=None):
     """只做耗时对比:混合 vs 分组,prefill 与 decode 各四项.
 
     返回 (mixed_prefill_ms, grouped_prefill_ms, mixed_decode_ms, grouped_decode_ms)。
     分组路径每组 shape 不同,首次会触发 Triton 重编译,必须先预热。
+    decode_lens 供 measure_both 统一五参调用,不传则内部自己算。
     """
     bs = input_ids.shape[0]
-    decode_lens = torch.ones(bs, device=input_ids.device, dtype=torch.int32)
+    if decode_lens is None:
+        decode_lens = torch.ones(
+            bs, device=input_ids.device, dtype=torch.int32)
     iters = PREFILL_ITERS
 
     # 预热:两条路径都各跑一遍 prefill + decode,排除编译与显存分配
@@ -265,7 +365,8 @@ def bench_paths(mgr, input_ids, attention_mask, names):
                 use_cache=False,
             )
 
-    mixed_prefill_times = [cuda_ms(time_mixed_prefill)[0] for _ in range(iters)]
+    mixed_prefill_times = [cuda_ms(time_mixed_prefill)[0]
+                           for _ in range(iters)]
     grouped_prefill_times = []
     for _ in range(iters):
         t0 = time.perf_counter()
@@ -278,7 +379,8 @@ def bench_paths(mgr, input_ids, attention_mask, names):
     for _ in range(iters):
         _, past = mixed_prefill(mgr, input_ids, attention_mask, names)
         nxt = torch.zeros(bs, 1, dtype=torch.long, device=input_ids.device)
-        ms, _ = cuda_ms(lambda: mixed_decode(mgr, nxt, past, names, decode_lens))
+        ms, _ = cuda_ms(lambda: mixed_decode(
+            mgr, nxt, past, names, decode_lens))
         mixed_decode_times.append(ms)
 
     grouped_decode_times = []
@@ -336,11 +438,12 @@ def main() -> int:
 
         header = (
             f"{'bs':>4} {'rank_mix':<16} {'TTFT(ms)':>10} "
-            f"{'TPOT(ms)':>10} {'tok/s':>9} {'total(ms)':>10}"
+            f"{'TPOT(ms)':>10} {'tok/s':>9} {'total(ms)':>10} "
+            f"{'base_ttft':>10} {'base_tpot':>10} {'add_ttft':>9} {'add_tpot':>9}"
         )
 
-        # ================= 一起跑:三组数据全部算完再打印 =================
-        # 阶段 1:单批次 prefill/decode 延迟
+        # ================= 一起跑:四组数据全部算完再打印 =================
+        # 阶段 1:单批次 prefill/decode 延迟,以及关掉 LoRA 后的基线
         scan_rows = []
         for bs in sorted(BATCHES):
             names = assign_names(bs, keys)
@@ -349,63 +452,9 @@ def main() -> int:
             # decode 每行只有 1 个 token,必须显式传 seq_lens 走 decode 语义
             decode_lens = torch.ones(bs, device=device, dtype=torch.int32)
 
-            def prefill():
-                """一次整 batch prefill,带 KV cache."""
-                return mgr.forward_with_lora(
-                    input_ids=input_ids,
-                    attention_mask=attn,
-                    lora_names=names,
-                    use_cache=True,
-                )
-
-            # 预热:排除 Triton 首次编译与显存分配
-            out = prefill()
-            past = out.past_key_values
-            next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
-            for _ in range(WARMUP):
-                out = mgr.forward_with_lora(
-                    input_ids=next_ids,
-                    attention_mask=None,
-                    seq_lens=decode_lens,
-                    lora_names=names,
-                    past_key_values=past,
-                    use_cache=True,
-                )
-                past = out.past_key_values
-                next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
-
-            prefill_times = []
-            for _ in range(PREFILL_ITERS):
-                ms, _ = cuda_ms(prefill)
-                prefill_times.append(ms)
-
-            # decode:重新 prefill 拿干净 cache,逐步记 event
-            out = prefill()
-            past = out.past_key_values
-            next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
-            starts, ends = [], []
-            for _ in range(NUM_DECODE):
-                start = torch.cuda.Event(enable_timing=True)
-                end = torch.cuda.Event(enable_timing=True)
-                start.record()
-                out = mgr.forward_with_lora(
-                    input_ids=next_ids,
-                    attention_mask=None,
-                    seq_lens=decode_lens,
-                    lora_names=names,
-                    past_key_values=past,
-                    use_cache=True,
-                )
-                end.record()
-                starts.append(start)
-                ends.append(end)
-                past = out.past_key_values
-                next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
-            torch.cuda.synchronize()
-
-            decode_times = [s.elapsed_time(e) for s, e in zip(starts, ends)]
-            ttft = statistics.fmean(prefill_times)
-            tpot = statistics.fmean(decode_times)
+            (ttft, tpot), (base_ttft, base_tpot), (add_ttft, add_tpot) = measure_both(
+                mgr, input_ids, attn, names, decode_lens, measure_ttft_tpot
+            )
             scan_rows.append(
                 {
                     "bs": bs,
@@ -414,6 +463,10 @@ def main() -> int:
                     "tpot": tpot,
                     "tok_s": bs * 1000 / tpot if tpot > 0 else 0.0,
                     "total": ttft + NUM_DECODE * tpot,
+                    "base_ttft": base_ttft,
+                    "base_tpot": base_tpot,
+                    "add_ttft": add_ttft,
+                    "add_tpot": add_tpot,
                 }
             )
 
@@ -428,28 +481,27 @@ def main() -> int:
                 names,
             )
             num_rows.append(
-                {"bs": bs, "groups": len(group_row_indices(names)), "stages": rows}
+                {"bs": bs, "groups": len(
+                    group_row_indices(names)), "stages": rows}
             )
 
-        # 阶段 3:混合 vs 分组的耗时
-        speed_rows = []
+        # 阶段 3:混合 vs 分组的耗时,开/关 LoRA 各一趟得到净耗时
+        speed_rows, speed_net_rows = [], []
         for bs in sorted(BATCHES):
             names = assign_names(bs, keys)
-            pf, gf, pd, gd = bench_paths(
-                mgr,
-                enc_full["input_ids"][:bs],
-                enc_full["attention_mask"][:bs],
-                names,
+            input_ids = enc_full["input_ids"][:bs]
+            attn = enc_full["attention_mask"][:bs]
+            decode_lens = torch.ones(bs, device=device, dtype=torch.int32)
+            (pf, gf, pd, gd), _, (npf, ngf, npd, ngd) = measure_both(
+                mgr, input_ids, attn, names, decode_lens, bench_paths
             )
+            groups = len(group_row_indices(names))
             speed_rows.append(
-                {
-                    "bs": bs,
-                    "groups": len(group_row_indices(names)),
-                    "pf": pf,
-                    "gf": gf,
-                    "pd": pd,
-                    "gd": gd,
-                }
+                {"bs": bs, "groups": groups, "pf": pf, "gf": gf, "pd": pd, "gd": gd}
+            )
+            speed_net_rows.append(
+                {"bs": bs, "groups": groups, "pf": npf,
+                    "gf": ngf, "pd": npd, "gd": ngd}
             )
 
         evictions = mgr.pool.eviction_policy.eviction_count
@@ -459,10 +511,13 @@ def main() -> int:
         print(header)
         print("-" * len(header))
         for r in scan_rows:
-            mix_str = " ".join(f"r{k}:{v}" for k, v in sorted(r["mix"].items()))
+            mix_str = " ".join(f"r{k}:{v}" for k,
+                               v in sorted(r["mix"].items()))
             print(
                 f"{r['bs']:>4} {mix_str:<16} {r['ttft']:>10.2f} "
-                f"{r['tpot']:>10.2f} {r['tok_s']:>9.1f} {r['total']:>10.1f}"
+                f"{r['tpot']:>10.2f} {r['tok_s']:>9.1f} {r['total']:>10.1f} "
+                f"{r['base_ttft']:>10.2f} {r['base_tpot']:>10.2f} "
+                f"{r['add_ttft']:>9.2f} {r['add_tpot']:>9.2f}"
             )
         print(f"pool_total_evictions={evictions}")
 
@@ -501,6 +556,22 @@ def main() -> int:
         print(sp_header)
         print("-" * len(sp_header))
         for r in speed_rows:
+            print(
+                f"{r['bs']:>4} {r['groups']:>7} "
+                f"{r['pf']:>9.2f} {r['gf']:>9.2f} {r['gf'] / r['pf']:>6.2f}x "
+                f"{r['pd']:>9.2f} {r['gd']:>9.2f} {r['gd'] / r['pd']:>6.2f}x"
+            )
+
+        print()
+        print("表4 LoRA 净耗时  带 LoRA 时间 - 只跑基座的时间 (ms)")
+        sp4_header = (
+            f"{'bs':>4} {'groups':>7} "
+            f"{'pf_lora':>9} {'pf_grp':>9} {'pf_x':>7} "
+            f"{'dc_lora':>9} {'dc_grp':>9} {'dc_x':>7}"
+        )
+        print(sp4_header)
+        print("-" * len(sp4_header))
+        for r in speed_net_rows:
             print(
                 f"{r['bs']:>4} {r['groups']:>7} "
                 f"{r['pf']:>9.2f} {r['gf']:>9.2f} {r['gf'] / r['pf']:>6.2f}x "

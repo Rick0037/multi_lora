@@ -92,7 +92,8 @@ def profile_window(fn, tag, outdir):
          阶段 = prefill 或 decode; n 后的数字 = 该 batch 内不同 adapter 的个数
          (ADAPTER_COUNTS 里的 1/8/32/64),不是 rank。
          例: "prefill_n8" -> 一次 prefill、batch 内混 8 个 adapter 的窗口,
-         产出 prefill_n8.txt(表格) + prefill_n8.json(chrome trace),各档各阶段互不覆盖。
+         产出 prefill_n8.txt(表格) + prefill_n8.json.gz(gzip 压缩后的 chrome trace,
+         Perfetto 直接打开这个 .gz 就行),各档各阶段互不覆盖。
     """
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -117,7 +118,7 @@ def profile_window(fn, tag, outdir):
 
     top10 = prof.key_averages().table(sort_by="self_device_time_total", row_limit=10)
     (outdir / f"{tag}.txt").write_text(top10)
-    prof.export_chrome_trace(str(outdir / f"{tag}.json"))
+    prof.export_chrome_trace(str(outdir / f"{tag}.json.gz"))
 
     return {
         "cpu_ms": cpu_us / 1000 / TIMED_ITERS,
