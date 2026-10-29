@@ -162,8 +162,14 @@ def profile_window(fn, tag, outdir):
 
 
 @torch.inference_mode()
-def run_one_tier(mgr, enc, names, device, outdir, num_adapters):
-    """跑一档:先 event 测延迟,再分别 profile prefill / decode."""
+def run_one_tier(mgr, enc, names, device, outdir, num_adapters,
+                 stages=("prefill", "decode")):
+    """跑一档:先 event 测延迟,再按 stages 开 profiler 窗口.
+
+    stages: 要 profile 哪几个阶段,默认两个都开(四档全量跑就是这个):
+            只关心 decode 时传 ("decode",),就少开一个窗口、少写一个 json.gz,
+            延迟测量(TTFT/TPOT)不受影响。
+    """
     decode_lens = torch.ones(BATCH_SIZE, device=device, dtype=torch.int32)
 
     def prefill():
@@ -196,17 +202,21 @@ def run_one_tier(mgr, enc, names, device, outdir, num_adapters):
     # 文件名里的 n 就是本档的 adapter 数量(num_adapters),例如 n=8 表示这个 batch 混了 8 个不同 adapter。
     # decode 窗口复用窗口外预先建好的同一份 cache, 并且每步 use_cache=False 不往里追加,
     # 这样每步 decode 的输入形状都相同, 也不会把 prefill 的耗时混进来
-    pf = profile_window(prefill, f"prefill_n{num_adapters}", outdir)
+    res = {}
+    if "prefill" in stages:
+        res["prefill"] = profile_window(
+            prefill, f"prefill_n{num_adapters}", outdir)
     # 真的 prefill 一次
     out = prefill()
     # 它输出的下一个 token,当作 decode 的输入
     ids = next_token(out)
-    dc = profile_window(
-        lambda: mgr.forward_with_lora(
-            input_ids=ids, attention_mask=None, seq_lens=decode_lens,
-            lora_names=names, past_key_values=out.past_key_values,
-            use_cache=False),
-        f"decode_n{num_adapters}", outdir)
+    if "decode" in stages:
+        res["decode"] = profile_window(
+            lambda: mgr.forward_with_lora(
+                input_ids=ids, attention_mask=None, seq_lens=decode_lens,
+                lora_names=names, past_key_values=out.past_key_values,
+                use_cache=False),
+            f"decode_n{num_adapters}", outdir)
 
     mix = " ".join(f"r{r}:{c}" for r, c in
                    sorted(Counter(ADAPTER_RANKS[n] for n in names).items()))
@@ -215,7 +225,7 @@ def run_one_tier(mgr, enc, names, device, outdir, num_adapters):
         "n": num_adapters, "mix": mix,
         "ttft": statistics.fmean(ttfts), "tpot": tpot,
         "tok_s": BATCH_SIZE * 1000 / tpot,
-        "prefill": pf, "decode": dc,
+        **res,
     }
 
 
@@ -237,6 +247,8 @@ def print_report(rows):
     stages = []
     for r in rows:
         for stage in ("prefill", "decode"):
+            if not r.get(stage):
+                continue
             s = r[stage]
             stages.append(
                 f"{r['n']:>8} {stage:>8} {s['cpu_ms']:>9.3f} "
@@ -250,6 +262,8 @@ def print_report(rows):
 
     for r in rows:
         for stage in ("prefill", "decode"):
+            if not r.get(stage):
+                continue
             print(f"\n表3 adapters={r['n']} {stage} top-10 kernel")
             print(r[stage]["top10"])
 

@@ -71,7 +71,7 @@ def dump_trace(obj: dict, path: Path) -> None:
         json.dump(obj, f)
 
 
-def build_op_index(events: List[dict]) -> Tuple[Dict[int, str], Dict[int, int]]:
+def build_op_index(events: List[dict]) -> Tuple[Dict[int, int], Dict[int, str]]:
     """建两张映射表:correlation -> 发起它的 aten 算子名;correlation -> runtime 事件下标."""
     corr_to_eid: Dict[int, int] = {}
     for e in events:
