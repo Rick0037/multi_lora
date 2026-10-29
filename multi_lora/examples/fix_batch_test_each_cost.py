@@ -36,7 +36,8 @@ TRACE_DIR = _ROOT / "traces" / "02_fix_batch_each_cost"
 # adapter model: make_qkvo_variants.py 生成的 64 个变体, 只含 qkvo, rank 按 8/16/32/64 循环
 ADAPTERS = {f"q{i:02d}": str(QKVO_VARIANTS / f"q{i:02d}") for i in range(64)}
 
-# {'q61': '/root/autodl-tmp/qwen3_4b_qkvo_variants/q61', 'q62': '/root/autodl-tmp/qwen3_4b_qkvo_variants/q62',
+# {'q61': '/root/autodl-tmp/qwen3_4b_qkvo_variants/q61',
+# 'q62': '/root/autodl-tmp/qwen3_4b_qkvo_variants/q62',
 # 'q63': '/root/autodl-tmp/qwen3_4b_qkvo_variants/q63'}
 
 
@@ -52,6 +53,10 @@ PROMPT = "user\nList three countries and their capitals.\nassistant\n"
 
 # 测试不同得adapter
 ADAPTER_COUNTS = [1, 8, 32, 64]
+# n=1 档只用 1 个 adapter, 默认会拿到 keys[0]=q00(r8);
+# 而另三档都是 8/16/32/64 各占 1/4(平均 rank 30), rank 差一截就没法比.
+# 所以这一档改用 r32 的 q02, 让四档的总 rank 都对齐.
+SOLO_ADAPTER = "q02"
 BATCH_SIZE = 64
 WARMUP_ITERS = 10
 TIMED_ITERS = 50
@@ -61,15 +66,18 @@ SEED = 1234
 """
 keys 顺序 = q00(r8), q01(r16), q02(r32), q03(r64), q04(r8), ...
 
-k=1 → i%1 恒为 0 → ["q00","q00",...]         → 整 batch 1 个 adapter(rank 8)
+k=1 → 特例走 SOLO_ADAPTER → ["q02","q02",...]   → 整 batch 1 个 adapter(rank 32)
 k=2 → i%2 = 0,1,0,1… → ["q00","q01","q00",...] → 2 个,各 32 行
 k=3 → i%3 = 0,1,2,0,1,2… → ["q00","q01","q02","q00",...] → 3 个,各 22/21/21 行
 k=4 → i%4 循环 → ["q00","q01","q02","q03",...] → 4 个,rank 8/16/32/64 各 16 行
+k=8/32/64 → rank 8/16/32/64 始终各占 1/4, 平均 rank 都是 30
 """
 
 
 def assign_names(k, keys):
     """循环取前 k 个名字填满 batch,使 batch 内不同 adapter 数恰好是 k."""
+    if k == 1:
+        return [SOLO_ADAPTER] * BATCH_SIZE
     return [keys[i % k] for i in range(BATCH_SIZE)]
 
 
