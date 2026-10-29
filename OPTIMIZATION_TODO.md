@@ -14,6 +14,48 @@
 
 ---
 
+## 0.5 实测基线（batch=64 / 64 个 adapter / Qwen3-4B）
+
+数据来源：`fix_batch_test_each_cost.py` + `analyze_trace.py`，产物在
+`traces/02_fix_batch_each_cost/` 与 `traces/04_decode_n64/`。
+单位 ms/forward，括号里的数字 = 每步该组的 kernel launch 次数。
+
+| 分组 | decode | prefill |
+|---|---|---|
+| base_gemm | 11.77 (433) | 40.87 (253) |
+| elementwise | 2.46 (1460) | 6.70 (1464) |
+| lora_b | 2.75 (144) | 3.02 (144) |
+| lora_a | 2.19 (144) | 2.34 (144) |
+| cat_kv | 0.85 (145) | 1.06 (145) |
+| attention | 0.78 (36) | 1.35 (36) |
+| other | 0.56 (149) | 0.76 (150) |
+| copy_memset | 0.034 (76) | 0.083 (149) |
+| **合计 busy** | **20.6** | **56.0** |
+| launch（不含 copy/memset） | 2512 | 2336 |
+
+**从这张表能读出的三件事**：
+
+1. **decode 是 launch-bound**：GPU busy 只有 20.6ms，但一次 forward 要发 2512 次 kernel，
+   墙钟约 100ms → 约 80% 时间在等 CPU 发指令，不是 GPU 算得慢。
+   平均每次 launch 摊到约 39μs CPU 时间（HF python + aten dispatch + triton launcher）。
+2. **LoRA 的真实占比**：decode 里 `lora_a+lora_b = 4.94ms`（busy 的 24%），prefill 里 5.36ms（9.6%）。
+   adapter 数 1→64 时 busy 只从 19.52 涨到 20.59（+5.5%），唯一随 n 增长的就是这两项。
+3. **GPU 上的拷贝可以忽略**：`copy_memset` 每步 0.034ms（busy 的 0.16%）。
+   想省“非推理耗时”不能盯 GPU 的 memcpy/memset，要盯 host 侧的同步与重建（见 P0-5）。
+
+**比数时的口径约束**（都踩过坑）：
+
+- `ProfilerStep*` 容器记录必须剔除：它的 device time = 整窗口跨度（含空档），
+  会把 busy 重复计一遍（实测 50 步多算 4511ms）。
+- 表2 的 `cpu_ms` 是 **CPU 算子净时间**，不是墙钟（墙钟 = cpu_ms + 容器空档）。
+- **`wall` / `gap` 不能跨进程比**：每个进程的第一个 profiler 窗口固定贵 30~55ms
+  （kineto/CUPTI 初始化 + 首次逐算子记录）。同一份 GPU 数据在三种跑法下 busy 为
+  20.653 / 20.614 / 20.594（≤0.3%），而 wall 为 158.97 / 113.64 / 100.80。
+- 端到端延迟（表1）当前报不住：同配置三次 TPOT = 71.83 / 86.75 / 90.01（±20%），
+  至少重复 2~3 次取区间。
+
+---
+
 ## P0：先做，收益确定或属于正确性问题
 
 ### P0-1 B kernel 的 store 缺 n 方向 mask（正确性）
@@ -101,7 +143,7 @@ for key in weights.modules:
 
 **位置**：`multi_lora/kernels/sgemm_lora_a.py:42-56`、`143-146`
 
-**问题**：grid 第一维按**全局最长** `max_len` 展开，但只有 `rank == 0` 的早退，
+**问题**：grid 第一维按**全局最长**`max_len` 展开，但只有 `rank == 0` 的早退，
 没有 `pid_s` 越界判断。
 
 混合 batch（例如 1 条 2048-token prefill + 31 条 decode）时，
@@ -137,7 +179,7 @@ seg_indptr[1:] = torch.cumsum(seg_lens, dim=0)
 外加 `pool.build_batch_info` 的 Python 循环和 `_setup_forward_batch` 遍历全部 252 个
 wrapper 调 `set_lora_info`。全部是 host 操作，之后再把小张量搬上 GPU。
 
-**改法**：初始化时按 `B_max` / `K` 预分配一次，后续原地更新前 `bs` 个元素：
+**改法**：初始化时按 `B_max` /`K` 预分配一次，后续原地更新前 `bs` 个元素：
 
 ```python
 weight_indices_gpu = torch.empty(B_max, device=cuda, dtype=torch.int32)
@@ -147,8 +189,8 @@ seg_lens_gpu       = torch.empty(B_max, device=cuda, dtype=torch.int32)
 seg_indptr_gpu     = torch.empty(B_max + 1, device=cuda, dtype=torch.int32)
 ```
 
-- `weight_indices` / `seg_lens` / `seg_indptr`：每 batch 只改前 `bs` 个。
-- `lora_ranks` / `scalings`：只有换入或驱逐时才需要更新。
+- `weight_indices` /`seg_lens` /`seg_indptr`：每 batch 只改前 `bs` 个。
+- `lora_ranks` /`scalings`：只有换入或驱逐时才需要更新。
 
 **额外收益**：地址稳定，是 CUDA Graph capture 的前置条件。
 
@@ -174,10 +216,10 @@ B 的输出维度是 `out_dim`（Qwen3-4B 下 1024–9728），比 A 的 rank �
 | 项 | 现状 |
 |---|---|
 | autotune | 无 |
-| `num_stages` / `num_warps` | 未传 |
-| `EVEN_K` 编译期判断 | 无，K-loop 每块都带 mask |
-| `tl.multiple_of` / `tl.max_contiguous` | 无 |
-| `tl.assume(stride > 0)` | 无 |
+|`num_stages` /`num_warps` | 未传 |
+|`EVEN_K` 编译期判断 | 无，K-loop 每块都带 mask |
+|`tl.multiple_of` /`tl.max_contiguous` | 无 |
+|`tl.assume(stride > 0)` | 无 |
 | x load 用 `.cg` | 无 |
 | 短段早退 | 只有 `rank == 0`（见 P0-4） |
 
@@ -213,8 +255,45 @@ decode 阶段形状固定，收益最大。
 **位置**：`multi_lora/pool.py:65-74`
 
 pageable 内存 + 默认流同步 `copy_`，且在 forward 之前串行执行。
-可改 pinned 内存 + 独立 copy stream + `non_blocking=True` + event 等待，
+可改 pinned 内存 + 独立 copy stream +`non_blocking=True` + event 等待，
 并按下一 batch 的 adapter 集合预取（需要双缓冲，避免覆盖 in-flight kernel 正在读的权重）。
+
+**⚠ 本条保留，不要降级。** 现在测不到收益只是**工况没搭好**：`POOL_SLOTS`=64 个 adapter
+全部常驻，稳态每步没有任何权重 H2D（分桶里那 0.034ms 全是元数据小拷贝）。
+真实场景显存不够、adapter 数远超槽位数时，这条是必经路径。
+
+**要验证先把工况造出来**：把 `POOL_SLOTS` 调小（如 16）+ 用 adapter 轮换的请求序列，
+让每步都有换入换出，否则任何异步改动都无法量化。
+
+---
+
+## 需要实验裁决（不要先下结论）
+
+### E-1 decode 下 A/B kernel 全在算 padding —— 要不要写 GEMV
+
+实测：decode 时 `max_len=1`，而
+
+```python
+BLOCK_M = 16                                # sgemm_lora_a.py:136
+grid = (cdiv(max_len, BLOCK_M) * cdiv(N, BLOCK_N), bs)   # cdiv(1,16) = 1
+```
+
+→ **16 行里只有 1 行是真数据，另外 15 行被 mask 但仍完整走 `tl.dot`**；
+B kernel 的 `BLOCK_S=16` 同理。再叠加 P0-2（rank16 时 n 方向 4 块只有 1 块有效），
+`lora_a` 的 15.2μs/次、`lora_b` 的 19.1μs/次 里面很可能是 padding 开销而不是真计算。
+
+**零成本裁决实验**（先不写新 kernel）：把 A 的 `BLOCK_M`、B 的 `BLOCK_S` 从 16 改成 4/2/1，
+各跑一次 decode（`bench_decode_n64.py`），看 `lora_a`/`lora_b` 两个桶的 ms 能不能跌。
+
+- 跌 → 证实 padding 主导，值得写 decode 专用 GEMV（`tl.sum` 归约，不走 `tl.dot`）
+- 不跌 → 说明已到带宽/launch 下限，停在早退优化即可
+
+### E-2 相同 adapter 的请求合组
+
+现在 grid 第二维 =`bs`,64 行各开一份 program；把同 adapter 的行排在一起（16 个 adapter × 4 行）
+能让 M 维真填满，launch 也从 288 降到 `2 × 16 × 分块数`。
+**代价**：输入要 gather 成连续块（多一次 copy）。建议等 E-1 出结果再做 —— 两者解的是同一个
+“计算强度不足”。
 
 ---
 
@@ -223,8 +302,11 @@ pageable 内存 + 默认流同步 `copy_`，且在 forward 之前串行执行。
 | 项 | 原因 |
 |---|---|
 | A/B 两个 kernel 融合 | 中间量 `[S, max_rank]` 在 prefill 下 S 可达数万，进不了 shared memory；只能省一次 launch，性价比低 |
-| 单独写 decode GEMV/BGMV | decode 时 `max_len=1`，现有 kernel 已退化成按 segment 的 GEMV；Punica/SGLang/vLLM 均未专门做 |
-| base GEMM 与 LoRA 流 overlap | prefill 时 base 已占满 SM；decode 两者都很短，overlap 空间小 |
+| base GEMM 与 LoRA 分 stream overlap | **实测反驳**：decode 的 80% 是 CPU 发不出指令（busy 20.6 vs 墙钟 100），不是 GPU 并行度不足；分 stream 只会多付 event 同步 |
+|`torch.compile` | 自定义 triton kernel + KV cache 会变长 → graph break / 反复重编译；同样是为了消 launch 开销，CUDA Graph 更对症 |
+| 手写小算子融合（norm/rope/silu/mul） |`elementwise` 确实有 1460 次/步、1.7μs/次，但 CPU 那部分 CUDA Graph 一次性就能拿到；先做 P2-1,再评估剩下的 2.46ms GPU 值不值得手写 |
+
+> 已移除:“单独写 decode GEMV”不再归入本表，改由 E-1 实验裁决。
 
 ---
 
@@ -258,12 +340,18 @@ pageable 内存 + 默认流同步 `copy_`，且在 forward 之前串行执行。
 
 ## 建议顺序
 
-1. P0-1（B 越界 mask）—— 正确性
-2. P0-2（A 的 n 分块早退）—— 一行判断，rank<64 时直接省 4 倍
-3. P0-3（去掉 `zero_`）
-4. P0-4（segment 早退）
-5. P1-1 / P1-2（B、A kernel 加 autotune 与流水）
-6. P1-3（复用中间张量）
-7. P0-5（常驻 metadata）→ P2-1（CUDA Graph）
-8. P1-4（stacked LoRA）
-9. P2-2（异步 H2D, base model & lora model overlap）
+按“收益 ÷ 代价”，并以 0.5 的实测数据为前提：
+
+1. **P0-1**（B 越界 mask）—— 正确性，一行的保险
+2. **P0-2 + P0-4**（两个早退）—— 各加一行 `return`，rank<64 时直接省 4 倍空转
+3. **P0-3**（删 504 次 `zero_`）—— 只删代码，无风险
+4. **E-1 实验**（`BLOCK_M/BLOCK_S` 改 4/2/1 跑 decode）—— 不改结构，用来定要不要写 GEMV
+5. **P0-5**（常驻 metadata）—— 兼两个作用：干掉每步的 `.item()` 同步与重建，
+   同时是 CUDA Graph 的**硬前置**（地址必须稳定）
+6. **P2-1 CUDA Graph** —— 本清单里收益最大的一招:decode 形状固定 + 2512 次 launch/步，
+   基线就是 `bench_decode_n64.py`（busy 20.6 / 墙钟 100 / launch 2587），目标把墙钟压到 30ms 量级
+7. **P1-1 / P1-2**（B、A 加 autotune 与流水）—— 主要救 prefill；且必须在 capture **之前** tune 完
+8. **P1-3**（复用中间张量）—— 跟着 P0-5 一起做
+9. **P1-4 stacked LoRA + 基座 QKV/gate-up 合并** —— 工作量最大（要改基座权重布局），
+   但 base_gemm 在 decode 要 433 次 launch 而逻辑上只有 252 个 linear，收益实在
+10. **E-2**（同 adapter 合组）、**P2-2**（异步 H2D，先把 `POOL_SLOTS` 换入换出工况搭起来）
