@@ -1,0 +1,237 @@
+(multi-lora) ~/autodl-tmp/code/multi_lora-main# HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  python multi_lora/examples/fix_batch_test_each_cost.py \
+&& python multi_lora/examples/analyze_trace.py traces/02_fix_batch_each_cost
+Loading weights: 100%|███████████████████████████████████████████████| 398/398 [00:02<00:00, 160.83it/s]
+_has_peft_layers False
+USDT:2026-10-29 16:41:35 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:41:41 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:43:01 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:43:09 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:44:45 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:44:51 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:46:17 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:46:22 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:47:59 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:48:05 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:49:33 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:49:39 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:51:21 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:51:27 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+USDT:2026-10-29 16:52:54 378489:378489 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-29 16:53:00 378489:378489 SyncActivityProfilerHandler.cpp:46] profiler_stop
+
+表1 延迟与吞吐
+adapters rank_mix           TTFT(ms)   TPOT(ms)     tok/s
+---------------------------------------------------------
+       1 r32:64                61.81      57.39    1115.2
+       8 r8:16 r16:16 r32:16 r64:16      75.24      70.27     910.8
+      32 r8:16 r16:16 r32:16 r64:16      75.54      71.26     898.1
+      64 r8:16 r16:16 r32:16 r64:16      93.56      90.01     711.0
+
+表2 单次 forward 的 CPU/GPU 占比
+adapters    stage   CPU(ms)   GPU(ms)    GPU%  launch/step
+----------------------------------------------------------
+       1  prefill    60.859    54.435   47.2%       2336.0
+       1   decode    74.728    19.522   20.7%       2511.0
+       8  prefill    61.546    54.647   47.0%       2336.0
+       8   decode    59.434    19.972   25.2%       2511.0
+      32  prefill    62.723    54.871   46.7%       2336.0
+      32   decode    61.221    20.077   24.7%       2511.0
+      64  prefill    62.784    55.998   47.1%       2336.0
+      64   decode    60.147    20.594   25.5%       2511.0
+
+表3 adapters=1 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.32%     321.679ms         9.17%     466.643ms      36.889us        2.047s        75.22%        2.047s     161.850us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us        1.217s        44.71%        1.217s     135.214us          9000  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     644.016ms        23.66%     644.016ms     178.893us          3600  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us     181.930ms         6.68%     181.930ms       3.639ms            50  
+                                              aten::mul         4.56%     231.933ms         7.16%     364.261ms      15.402us     144.496ms         5.31%     144.496ms       6.110us         23650  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      91.913ms         3.38%      91.913ms      12.766us          7200  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      90.058ms         3.31%      90.058ms      12.508us          7200  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      74.674ms         2.74%      74.674ms       5.168us         14450  
+                         aten::_flash_attention_forward         0.67%      33.981ms         2.03%     103.278ms      57.377us      67.629ms         2.48%      67.629ms      37.571us          1800  
+void pytorch_flash::flash_fwd_kernel<Flash_fwd_kerne...         0.00%       0.000us         0.00%       0.000us       0.000us      67.629ms         2.48%      67.629ms      37.571us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 5.090s
+Self CUDA time total: 2.722s
+
+表3 adapters=1 decode top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         7.32%     458.898ms        10.78%     675.567ms      53.404us     559.898ms        57.36%     559.898ms      44.261us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     283.170ms        29.01%     283.170ms      39.329us          7200  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     107.048ms        10.97%     107.048ms      29.736us          3600  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us     106.399ms        10.90%     106.399ms      59.111us          1800  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      94.832ms         9.72%      94.832ms      13.171us          7200  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      89.834ms         9.20%      89.834ms      12.477us          7200  
+                                              aten::mul         4.68%     293.108ms         7.36%     461.060ms      19.495us      49.269ms         5.05%      49.269ms       2.083us         23650  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      44.320ms         4.54%      44.320ms     886.401us            50  
+                                              aten::cat         1.52%      95.130ms         2.42%     151.703ms      20.925us      42.116ms         4.31%      42.116ms       5.809us          7250  
+                         aten::_flash_attention_forward         1.05%      66.036ms         2.97%     186.425ms     103.569us      39.434ms         4.04%      39.434ms      21.908us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 6.267s
+Self CUDA time total: 976.076ms
+
+表3 adapters=8 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.33%     327.513ms         9.11%     471.026ms      37.235us        2.044s        74.82%        2.044s     161.617us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us        1.216s        44.50%        1.216s     135.103us          9000  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     642.550ms        23.52%     642.550ms     178.486us          3600  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us     181.489ms         6.64%     181.489ms       3.630ms            50  
+                                              aten::mul         4.57%     236.482ms         7.11%     367.577ms      15.542us     143.879ms         5.27%     143.879ms       6.084us         23650  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     118.722ms         4.35%     118.722ms      16.489us          7200  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      79.238ms         2.90%      79.238ms      11.005us          7200  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      74.454ms         2.72%      74.454ms       5.152us         14450  
+                         aten::_flash_attention_forward         0.67%      34.729ms         1.98%     102.449ms      56.916us      67.427ms         2.47%      67.427ms      37.460us          1800  
+void pytorch_flash::flash_fwd_kernel<Flash_fwd_kerne...         0.00%       0.000us         0.00%       0.000us       0.000us      67.427ms         2.47%      67.427ms      37.460us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 5.173s
+Self CUDA time total: 2.732s
+
+表3 adapters=8 decode top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.91%     345.303ms        10.12%     505.600ms      39.968us     559.773ms        56.06%     559.773ms      44.251us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     282.858ms        28.33%     282.858ms      39.286us          7200  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     123.394ms        12.36%     123.394ms      17.138us          7200  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     107.487ms        10.76%     107.487ms      29.858us          3600  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us     106.153ms        10.63%     106.153ms      58.974us          1800  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      83.488ms         8.36%      83.488ms      11.596us          7200  
+                                              aten::mul         4.83%     241.107ms         7.41%     370.209ms      15.654us      49.303ms         4.94%      49.303ms       2.085us         23650  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      44.294ms         4.44%      44.294ms     885.871us            50  
+                                              aten::cat         1.54%      76.960ms         2.34%     116.859ms      16.118us      42.446ms         4.25%      42.446ms       5.855us          7250  
+                         aten::_flash_attention_forward         1.09%      54.666ms         3.12%     155.628ms      86.460us      39.422ms         3.95%      39.422ms      21.901us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 4.994s
+Self CUDA time total: 998.607ms
+
+表3 adapters=32 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.29%     328.845ms         9.08%     474.944ms      37.545us        2.044s        74.50%        2.044s     161.580us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us        1.216s        44.31%        1.216s     135.070us          9000  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     642.436ms        23.42%     642.436ms     178.454us          3600  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us     181.485ms         6.61%     181.485ms       3.630ms            50  
+                                              aten::mul         4.56%     238.726ms         7.09%     370.859ms      15.681us     144.108ms         5.25%     144.108ms       6.093us         23650  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     129.080ms         4.70%     129.080ms      17.928us          7200  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      79.486ms         2.90%      79.486ms      11.040us          7200  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      74.546ms         2.72%      74.546ms       5.159us         14450  
+                         aten::_flash_attention_forward         0.68%      35.821ms         2.01%     105.098ms      58.388us      67.447ms         2.46%      67.447ms      37.470us          1800  
+void pytorch_flash::flash_fwd_kernel<Flash_fwd_kerne...         0.00%       0.000us         0.00%       0.000us       0.000us      67.447ms         2.46%      67.447ms      37.470us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 5.230s
+Self CUDA time total: 2.744s
+
+表3 adapters=32 decode top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.91%     353.784ms        10.10%     516.915ms      40.863us     559.681ms        55.75%     559.681ms      44.244us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     282.600ms        28.15%     282.600ms      39.250us          7200  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     127.579ms        12.71%     127.579ms      17.719us          7200  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     107.671ms        10.73%     107.671ms      29.909us          3600  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us     106.140ms        10.57%     106.140ms      58.967us          1800  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      84.376ms         8.41%      84.376ms      11.719us          7200  
+                                              aten::mul         4.79%     245.059ms         7.37%     377.289ms      15.953us      49.471ms         4.93%      49.471ms       2.092us         23650  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      44.274ms         4.41%      44.274ms     885.472us            50  
+                                              aten::cat         1.57%      80.299ms         2.37%     121.112ms      16.705us      42.263ms         4.21%      42.263ms       5.829us          7250  
+                         aten::_flash_attention_forward         1.12%      57.170ms         3.13%     160.164ms      88.980us      39.473ms         3.93%      39.473ms      21.929us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 5.120s
+Self CUDA time total: 1.004s
+
+表3 adapters=64 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.20%     324.905ms         8.96%     469.952ms      37.150us        2.041s        72.89%        2.041s     161.334us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us        1.214s        43.36%        1.214s     134.899us          9000  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     641.220ms        22.90%     641.220ms     178.117us          3600  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us     181.137ms         6.47%     181.137ms       3.623ms            50  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     150.809ms         5.39%     150.809ms      20.946us          7200  
+                                              aten::mul         4.57%     239.780ms         7.09%     372.048ms      15.731us     144.917ms         5.18%     144.917ms       6.128us         23650  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     117.087ms         4.18%     117.087ms      16.262us          7200  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      75.374ms         2.69%      75.374ms       5.216us         14450  
+                         aten::_flash_attention_forward         0.69%      36.017ms         2.02%     105.886ms      58.826us      67.367ms         2.41%      67.367ms      37.426us          1800  
+void pytorch_flash::flash_fwd_kernel<Flash_fwd_kerne...         0.00%       0.000us         0.00%       0.000us       0.000us      67.367ms         2.41%      67.367ms      37.426us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 5.244s
+Self CUDA time total: 2.800s
+
+表3 adapters=64 decode top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.81%     343.119ms         9.99%     503.564ms      39.807us     550.428ms        53.46%     550.428ms      43.512us         12650  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     274.111ms        26.62%     274.111ms      38.071us          7200  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     137.329ms        13.34%     137.329ms      19.073us          7200  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     109.397ms        10.62%     109.397ms      15.194us          7200  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     107.006ms        10.39%     107.006ms      29.724us          3600  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us     106.097ms        10.30%     106.097ms      58.943us          1800  
+                                              aten::mul         4.81%     242.317ms         7.38%     371.797ms      15.721us      49.641ms         4.82%      49.641ms       2.099us         23650  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      44.274ms         4.30%      44.274ms     885.486us            50  
+                                              aten::cat         1.57%      79.043ms         2.36%     119.045ms      16.420us      42.427ms         4.12%      42.427ms       5.852us          7250  
+                         aten::_flash_attention_forward         1.12%      56.475ms         3.15%     158.932ms      88.296us      39.409ms         3.83%      39.409ms      21.894us          1800  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 5.040s
+Self CUDA time total: 1.030s
+
+
+
+  derived -> decode_n1.bucketed.json.gz
+  derived -> decode_n32.bucketed.json.gz
+  derived -> decode_n64.bucketed.json.gz
+  derived -> decode_n8.bucketed.json.gz
+  derived -> prefill_n1.bucketed.json.gz
+  derived -> prefill_n32.bucketed.json.gz
+  derived -> prefill_n64.bucketed.json.gz
+  derived -> prefill_n8.bucketed.json.gz
+
+trace                  steps    wall base_gemm lora_ab_g adapter_i adapter_h other_gpu     gap   gap% launch/f
+--------------------------------------------------------------------------------------------------------------
+decode_n1.json.gz         50 125.339    11.955     3.693     0.005     0.034     3.834 105.817  84.4%   2587.0
+decode_n32.json.gz        50 102.403    11.951     4.239     0.005     0.034     3.847  82.326  80.4%   2587.0
+decode_n64.json.gz        50 100.803    11.765     4.935     0.005     0.034     3.856  80.209  79.6%   2587.0
+decode_n8.json.gz         50  99.875    11.952     4.138     0.005     0.034     3.844  79.903  80.0%   2587.0
+prefill_n1.json.gz        50 101.805    42.210     3.639     0.006     0.093     8.486  47.371  46.5%   2485.0
+prefill_n32.json.gz       50 104.594    42.140     4.171     0.006     0.091     8.462  49.723  47.5%   2485.0
+prefill_n64.json.gz       50 104.879    42.076     5.358     0.006     0.091     8.466  48.881  46.6%   2485.0
+prefill_n8.json.gz        50 103.458    42.148     3.959     0.006     0.092     8.441  48.811  47.2%   2485.0
+
+单位 ms/forward;gap = 墙钟 - GPU 忙时(即 launch 空档与 CPU 阻塞)
+
+=== decode: 单步 ms(次数/步), 按平均耗时降序 ===
+item                         n=1             n=8            n=32            n=64
+--------------------------------------------------------------------------------
+base_gemm          11.166 ( 433)   11.163 ( 433)   11.162 ( 433)   10.977 ( 433)
+elementwise         2.436 (1460)    2.438 (1460)    2.445 (1460)    2.449 (1460)
+lora_b              1.897 ( 144)    2.468 ( 144)    2.552 ( 144)    2.747 ( 144)
+lora_a              1.797 ( 144)    1.670 ( 144)    1.688 ( 144)    2.188 ( 144)
+cat_kv              0.842 ( 145)    0.849 ( 145)    0.845 ( 145)    0.849 ( 145)
+attention           0.789 (  36)    0.788 (  36)    0.789 (  36)    0.788 (  36)
+other               0.562 ( 149)    0.562 ( 149)    0.563 ( 149)    0.563 ( 149)
+copy_memset         0.034 (  76)    0.034 (  76)    0.034 (  76)    0.034 (  76)
+Σ                  19.522 (2587)   19.972 (2587)   20.077 (2587)   20.594 (2587)
+
+=== prefill: 单步 ms(次数/步), 按平均耗时降序 ===
+item                         n=1             n=8            n=32            n=64
+--------------------------------------------------------------------------------
+base_gemm          40.857 ( 253)   40.799 ( 253)   40.791 ( 253)   40.729 ( 253)
+elementwise         6.662 (1464)    6.628 (1464)    6.652 (1464)    6.661 (1464)
+lora_b              1.838 ( 144)    2.374 ( 144)    2.582 ( 144)    3.016 ( 144)
+lora_a              1.801 ( 144)    1.585 ( 144)    1.590 ( 144)    2.342 ( 144)
+attention           1.353 (  36)    1.349 (  36)    1.349 (  36)    1.347 (  36)
+cat_kv              1.061 ( 145)    1.059 ( 145)    1.060 ( 145)    1.058 ( 145)
+other               0.769 ( 150)    0.760 ( 150)    0.757 ( 150)    0.754 ( 150)
+copy_memset         0.093 ( 149)    0.092 ( 149)    0.091 ( 149)    0.091 ( 149)
+Σ                  54.435 (2485)   54.647 (2485)   54.871 (2485)   55.998 (2485)
+
+csv -> traces/02_fix_batch_each_cost/bucket_summary.csv, bucket_detail.csv, kernel_group_summary.csv

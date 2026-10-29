@@ -93,8 +93,28 @@ def cuda_ms(fn):
     return start.elapsed_time(end), out
 
 
+def top_kernel_table(prof, n=10):
+    """top-n GPU 耗时表;剔除 ProfilerStep 容器行.
+
+    key_averages().table() 没有过滤参数,而容器行的 self_device_time = 整窗口 GPU 跳度
+    (含空档),会顶到第一名且百分比超 100%. 所以多取一行再删掉它,保证真 top-n 不变短.
+    其余行的百分比是 kineto 按去重后的 busy 算的(559.637/975.292=57.38%), 无需修正.
+    """
+    raw = prof.key_averages().table(sort_by="self_device_time_total", row_limit=n + 1)
+    return "\n".join(line for line in raw.splitlines()
+                     if "ProfilerStep" not in line)
+
+
 def profile_window(fn, tag, outdir):
     """profile TIMED_ITERS 次 fn(),返回单次 forward 的 CPU/GPU 构成.
+
+    输出口径(都是 ÷TIMED_ITERS 的单次值):
+      cpu_ms   = CPU 上真正在跑算子的时间(各 CPU 算子 self 相加,不含容器空档),
+                 所以它小于墙钟: 实测 60.86 + 空档 40.94 = 页脚墙钟 101.80
+      gpu_ms   = GPU 上真正在跑 kernel 的时间(逐条 kernel 时长,无容器重复)
+      gpu_pct  = gpu_ms / (gpu_ms + cpu_ms),两边都在忙时 GPU 占的份额;
+                 想看"GPU 在墙钟里占多少"要看 analyze_trace 的 gap%
+      launches = 单步 kernel 数(Memcpy/Memset 不计入)
 
     tag: 输出文件名前缀,格式为 "{阶段}_n{档位数}"。
          阶段 = prefill 或 decode; n 后的数字 = 该 batch 内不同 adapter 的个数
@@ -117,6 +137,10 @@ def profile_window(fn, tag, outdir):
     gpu_us = cpu_us = 0.0
     launches = 0
     for ev in prof.events() or []:
+        # schedule 打的 ProfilerStep 容器标记要排除:它自带的 GPU 时间 = 整窗口跨度(含空档),
+        # 计进来会把真 busy 重复加一遍(实测 50 步多算 4511ms)
+        if ev.name.startswith("ProfilerStep"):
+            continue
         if ev.device_type == DeviceType.CUDA:
             gpu_us += ev.self_device_time_total
             if "Memcpy" not in ev.name and "Memset" not in ev.name:
@@ -124,7 +148,7 @@ def profile_window(fn, tag, outdir):
         else:
             cpu_us += ev.self_cpu_time_total
 
-    top10 = prof.key_averages().table(sort_by="self_device_time_total", row_limit=10)
+    top10 = top_kernel_table(prof)
     (outdir / f"{tag}.txt").write_text(top10)
     prof.export_chrome_trace(str(outdir / f"{tag}.json.gz"))
 

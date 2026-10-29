@@ -59,7 +59,8 @@ def to_kernel_input_metadata(
     weight_indices = torch.tensor(
         pool_batch.weight_indices, device=device, dtype=torch.int32
     )
-    lora_ranks = torch.tensor(pool_batch.lora_ranks, device=device, dtype=torch.int32)
+    lora_ranks = torch.tensor(pool_batch.lora_ranks,
+                              device=device, dtype=torch.int32)
     scalings = torch.tensor(pool_batch.scalings, device=device, dtype=dtype)
 
     #! 如果 `lora_names = ['a', 'a', 'b']` 会得到`weight_indices = [0, 0, 1]` 。

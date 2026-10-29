@@ -110,6 +110,28 @@ def classify(name: str, cat: str, op: Optional[str]) -> str:
     return "other_gpu"
 
 
+# 五桶太粗(基座 GEMM 一桶就吃掉 70%), 再加一组互斥的细粒度分组, 按顺序取第一个命中.
+# 注: lm_head 从名字上认不出来, 归在 base_gemm 里.
+GROUP_RULES = [
+    ("lora_a", re.compile(r"_sgemm_lora_a_kernel")),
+    ("lora_b", re.compile(r"_sgemm_lora_b_kernel")),
+    ("attention", re.compile(r"flash|fmha|attention", re.I)),
+    ("cat_kv", re.compile(r"CatArrayBatchedCopy|concat", re.I)),
+    ("base_gemm", re.compile(r"gemm|cutlass|cublas|nvjet|gemv", re.I)),
+    ("elementwise", re.compile(r"elementwise", re.I)),
+]
+
+
+def group_of(name: str, cat: str) -> str:
+    """GPU 事件 -> 分组名(copy/memset 靠 cat 认, 其余靠 kernel 名)."""
+    if cat in ("gpu_memcpy", "gpu_memset") or re.search(r"Memcpy|Memset", name):
+        return "copy_memset"
+    for label, rx in GROUP_RULES:
+        if rx.search(name):
+            return label
+    return "other"
+
+
 def find_steps(events: List[dict]) -> List[Tuple[str, float, float]]:
     """profiler schedule 打的 ProfilerStep#N 标记 = 一次 forward 的 CPU 区间."""
     out = [(e["name"], e["ts"], e["ts"] + e.get("dur", 0.0))
@@ -148,6 +170,7 @@ def analyze(path: Path, max_steps: int) -> Tuple[Dict, dict]:
     bucket_cnt = defaultdict(int)
     detail = defaultdict(lambda: [0.0, 0])  # (桶, kernel 名) -> [us, 次数]
     op_detail = defaultdict(lambda: [0.0, 0])
+    group_acc = defaultdict(lambda: [0.0, 0])   # 分组 -> [us, 次数]
     per_step = defaultdict(lambda: defaultdict(float))   # step -> 桶 -> us
     step_gpu_iv = defaultdict(list)
     kept_iv: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
@@ -173,6 +196,9 @@ def analyze(path: Path, max_steps: int) -> Tuple[Dict, dict]:
         detail[(b, short)][1] += 1
         op_detail[(b, op or "?")][0] += dur
         op_detail[(b, op or "?")][1] += 1
+        g = group_of(e["name"], e["cat"])
+        group_acc[g][0] += dur
+        group_acc[g][1] += 1
         if si < limit:
             kept_iv[b].append((e["ts"], e["ts"] + dur))
 
@@ -194,6 +220,8 @@ def analyze(path: Path, max_steps: int) -> Tuple[Dict, dict]:
     # 每个桶内部的排名,交给 main 写 csv 用(不进汇总表)
     summary["_detail"] = detail
     summary["_op_detail"] = op_detail
+    summary["_groups"] = {k: [v[0] / 1000 / n_steps, v[1] / n_steps]
+                          for k, v in group_acc.items()} if n_steps else {}
 
     derived = build_derived(data, kept_iv, per_step, steps[:limit], limit)
     return summary, derived
@@ -255,7 +283,36 @@ def print_table(summaries: List[Dict]) -> None:
     print("\n单位 ms/forward;gap = 墙钟 - GPU 忙时(即 launch 空档与 CPU 阻塞)")
 
 
-def write_csvs(summaries: List[Dict], details, outdir: Path) -> None:
+def print_group_table(group_rows: Dict) -> None:
+    """每个阶段一张「分组 × adapter 档」表, 行按平均耗时降序.
+
+    用来看两阶段的结构差异: 同一组在 prefill/decode 里的排名会换位.
+    各列格式 = 单步 ms(括号内是单步次数); 行合计会略大于 gpu_busy_ms,
+    因为少量 kernel 并行重叠(busy 取的是区间并集).
+    """
+    stages: Dict[str, List] = {}
+    for (stage, tier), g in group_rows.items():
+        stages.setdefault(stage, []).append((tier, g))
+    for stage in sorted(stages):
+        items = sorted(stages[stage])
+        labels = sorted({k for _, g in items for k in g},
+                        key=lambda k: -sum(g.get(k, [0.0])[0] for _, g in items))
+        hdr = f"{'item':<16}" + \
+            "".join(f"{('n=' + str(t)):>16}" for t, _ in items)
+        print(f"\n=== {stage}: 单步 ms(次数/步), 按平均耗时降序 ===")
+        print(hdr)
+        print("-" * len(hdr))
+        for k in labels:
+            cells = "".join(
+                f"{g[k][0]:>9.3f} ({g[k][1]:>4.0f})" if k in g else " " * 16
+                for _, g in items)
+            print(f"{k:<16}{cells}")
+        print(f"{'Σ':<16}" + "".join(
+            f"{sum(v[0] for v in g.values()):>9.3f} ({sum(v[1] for v in g.values()):>4.0f})"
+            for _, g in items))
+
+
+def write_csvs(summaries: List[Dict], details, group_rows, outdir: Path) -> None:
     with (outdir / "bucket_summary.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(summaries[0].keys()))
         w.writeheader()
@@ -270,6 +327,13 @@ def write_csvs(summaries: List[Dict], details, outdir: Path) -> None:
             for bucket, kind, name, us, cnt in rows:
                 w.writerow([trace, bucket, kind, name,
                             round(us / 1000, 4), round(cnt, 1)])
+    with (outdir / "kernel_group_summary.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["stage", "adapters", "group",
+                    "ms_per_forward", "count_per_forward"])
+        for (stage, tier), g in sorted(group_rows.items()):
+            for k, (ms, cnt) in sorted(g.items(), key=lambda x: -x[1][0]):
+                w.writerow([stage, tier, k, round(ms, 4), round(cnt, 1)])
 
 
 def main() -> int:
@@ -293,7 +357,7 @@ def main() -> int:
         print(f"no trace found under {target}")
         return 1
 
-    summaries, details = [], {}
+    summaries, details, group_rows = [], {}, {}
     for p in files:
         stem = p.name.replace(".json.gz", "").replace(".json", "")
         s, derived = analyze(p, args.max_steps)
@@ -307,13 +371,19 @@ def main() -> int:
                 s.pop("_op_detail").items(), key=lambda x: -x[1][0])[:12]:
             rows.append([b, "aten_op", name, us, cnt / s["steps"]])
         details[stem] = rows
+        # 分组表: 从文件名取阶段与 adapter 档数, 认不出来的归 stage="other"
+        m = re.match(r"(prefill|decode|m|mix)_n(\d+)", stem)
+        key = ((m.group(1), int(m.group(2))) if m else (stem, 0))
+        group_rows[key] = s.pop("_groups")
         if not args.no_derived:
             dump_trace(derived, p.parent / f"{stem}.bucketed.json.gz")
             print(f"  derived -> {stem}.bucketed.json.gz")
 
     print_table(summaries)
-    write_csvs(summaries, details, files[0].parent)
-    print(f"\ncsv -> {files[0].parent}/bucket_summary.csv, bucket_detail.csv")
+    print_group_table(group_rows)
+    write_csvs(summaries, details, group_rows, files[0].parent)
+    print(f"\ncsv -> {files[0].parent}/bucket_summary.csv, "
+          f"bucket_detail.csv, kernel_group_summary.csv")
     return 0
 
 
