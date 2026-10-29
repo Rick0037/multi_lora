@@ -161,9 +161,10 @@ if pid_s * BLOCK_S >= seg_len:
 
 ---
 
-### P0-5 每步重建设备端元数据
+### P0-5 每步重建设备端元数据（T1 已做一半，剩下常驻化待做）
 
-**位置**：`multi_lora/batch_info.py:56-88`、`multi_lora/manager.py:177-198`
+**位置**：`multi_lora/batch_info.py`（`to_kernel_input_metadata`）、
+`multi_lora/manager.py`（`_setup_forward_batch`）
 
 **问题**：每个 forward step 都执行
 
@@ -179,7 +180,7 @@ seg_indptr[1:] = torch.cumsum(seg_lens, dim=0)
 外加 `pool.build_batch_info` 的 Python 循环和 `_setup_forward_batch` 遍历全部 252 个
 wrapper 调 `set_lora_info`。全部是 host 操作，之后再把小张量搬上 GPU。
 
-**改法**：初始化时按 `B_max` /`K` 预分配一次，后续原地更新前 `bs` 个元素：
+**改法**：初始化时按 `B_max` / `K` 预分配一次，后续原地更新前 `bs` 个元素：
 
 ```python
 weight_indices_gpu = torch.empty(B_max, device=cuda, dtype=torch.int32)
@@ -189,10 +190,37 @@ seg_lens_gpu       = torch.empty(B_max, device=cuda, dtype=torch.int32)
 seg_indptr_gpu     = torch.empty(B_max + 1, device=cuda, dtype=torch.int32)
 ```
 
-- `weight_indices` /`seg_lens` /`seg_indptr`：每 batch 只改前 `bs` 个。
-- `lora_ranks` /`scalings`：只有换入或驱逐时才需要更新。
+- `weight_indices` / `seg_lens` / `seg_indptr`：每 batch 只改前 `bs` 个。
+- `lora_ranks` / `scalings`：只有换入或驱逐时才需要更新。
 
 **额外收益**：地址稳定，是 CUDA Graph capture 的前置条件。
+
+#### T1 已完成（已落到代码里）
+
+`to_kernel_input_metadata` 里的段长、前缀和、最大值全部改在 **CPU 上算**：
+
+- 删掉 `seg_lens.max().item()` → 每步少 **1 次 GPU->CPU 同步**（这是本条真正的收益，
+  在 busy 上看不出来，只能从 墙钟 / 同步次数 上看）
+- 删掉 `torch.cumsum` 与 `seg_lens.to(device)` 的 DtoD
+- `seq_lens` 的参数语义改为 **CPU 整数序列**（`list` / CPU tensor）；
+  传 CUDA tensor 仍兼容，但会多一次 `.tolist()` 同步
+
+#### 遗留处理情况（已改完）
+
+所有调用方现在都传 **CPU list**（`[1] * bs`），不再建 CUDA 张量：
+
+| 文件 | 改动 |
+|---|---|
+| `manager.py` | `[seq_len] * batch_size`（替掉 `torch.full(..., device=...)`） |
+| `examples/fix_batch_test_each_cost.py` | `decode_lens = [1] * BATCH_SIZE` |
+| `examples/bench_add_batch_size.py` | 5 处（含 `grouped_decode` 里的 `[1] * idx.numel()`） |
+| `examples/bench_qwen4b_e2e.py` | `decode_lens = [1] * batch` |
+| `examples/inference_qwen4b_lora.py` | `decode_lens = [1] * ids.size(0)` |
+| `examples/bench_one_decoder_layer.py` | `decode_lens = [1] * BATCH_SIZE` |
+
+**不改**：`deprecated/profile_multilora.py`、`deprecated/bench_multilora_workload.py`
+仍传 CUDA tensor，走 `to_kernel_input_metadata` 的 `.tolist()` 兼容分支。
+已归档代码不追求收益，但要保证能跑（兼容分支因此不能删）。
 
 ---
 

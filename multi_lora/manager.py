@@ -105,7 +105,7 @@ class MultiLoRAManager:
             eviction_policy=eviction_policy,
             lora_backend=lora_backend,
             lora_target_suffixes=lora_target_suffixes,
-        )  #! 创建一大堆类内的成员变量
+        )  # ! 创建一大堆类内的成员变量
         #! a,b 先登记
         for name, path in adapters.items():
             mgr.register_adapter(LoRARef(lora_name=name, lora_path=path))
@@ -165,9 +165,12 @@ class MultiLoRAManager:
         return self.pool.build_batch_info(list(lora_names))
 
     def build_kernel_input_metadata(
-        self, lora_names: Sequence[LoraName], *, seq_lens: Optional[torch.Tensor] = None
+        self, lora_names: Sequence[LoraName], *, seq_lens: Optional[Sequence[int]] = None
     ) -> KernelInputMetaData:
-        """prepare_lora_batch + 转成 kernel 读取的 GPU 张量."""
+        """prepare_lora_batch + 转成 kernel 读取的 GPU 张量.
+
+        seq_lens 是 CPU 上每段的 token 数(如 [13, 13, 22]);decode 不传(每段 1)。
+        """
         batch_info = self.prepare_lora_batch(lora_names)
         return to_kernel_input_metadata(
             batch_info,
@@ -180,10 +183,11 @@ class MultiLoRAManager:
         self,
         lora_names: Sequence[LoraName],
         *,
-        seq_lens: Optional[torch.Tensor] = None,
+        seq_lens: Optional[Sequence[int]] = None,
     ) -> None:
         """forward 前:给 backend 设置 metadata,给每个 LinearWithLoRA 注入 buffer."""
-        metadata = self.build_kernel_input_metadata(lora_names, seq_lens=seq_lens)
+        metadata = self.build_kernel_input_metadata(
+            lora_names, seq_lens=seq_lens)
         self._lora_backend.set_kernel_input_metadata(metadata)
 
         #! 所有的
@@ -207,7 +211,7 @@ class MultiLoRAManager:
         input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         x: Optional[torch.Tensor] = None,
-        seq_lens: Optional[torch.Tensor] = None,
+        seq_lens: Optional[Sequence[int]] = None,
         **kwargs,
     ):
         """整模型 forward:先准备 batch,再让各 LinearWithLoRA 里算 LoRA delta.
@@ -219,9 +223,8 @@ class MultiLoRAManager:
         # 所以每段长度必须按 padded 的 S 算,不能用 mask.sum() 的有效长度
         if seq_lens is None and attention_mask is not None:
             batch_size, seq_len = attention_mask.shape
-            seq_lens = torch.full(
-                (batch_size,), seq_len, device=attention_mask.device, dtype=torch.int32
-            )
+            # 段长是 host 侧数字,直接给 CPU list,不建 GPU 张量
+            seq_lens = [seq_len] * batch_size
 
         # * (2) 准备 batch:装槽位 + 生成 kernel 元数据 + 把 buffer 注入每个 wrapper(linear)
         # lora_names 本次进来的 names ['a', None, 'b']

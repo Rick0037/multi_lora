@@ -115,7 +115,8 @@ def load_requests(path: Path) -> List[Tuple[Optional[str], str]]:
             name = name_raw
         prompt = "\n".join(lines[1:]).strip()
         if not prompt:
-            raise ValueError(f"empty prompt in block starting with {name_raw!r}")
+            raise ValueError(
+                f"empty prompt in block starting with {name_raw!r}")
         out.append((name, prompt))
     return out
 
@@ -224,7 +225,7 @@ def greedy_decode_triton(
     step_logits: List[torch.Tensor] = []
     # decode 阶段每行只有 1 个 token;显式传 seq_lens 才走 decode 分支,
     # 否则 manager 会按 attention_mask 的列数当成 prefill 段长
-    decode_lens = torch.ones(ids.size(0), device=device, dtype=torch.int32)
+    decode_lens = [1] * ids.size(0)  # CPU list,不用建 GPU 张量
     for _ in range(max_new_tokens):
         step_logits.append(logits)
         nxt = logits.argmax(dim=-1, keepdim=True)
@@ -254,7 +255,8 @@ def compare_generations(
 ) -> bool:
     """逐 token 与逐步 logits 对比;分歧处打印 PEFT 的 top1-top2 间距."""
     n = min(len(peft_logits), len(tri_logits))
-    step_diffs = [(peft_logits[i] - tri_logits[i]).abs().max().item() for i in range(n)]
+    step_diffs = [(peft_logits[i] - tri_logits[i]).abs().max().item()
+                  for i in range(n)]
     max_diff = max(step_diffs) if step_diffs else 0.0
     mean_diff = sum(step_diffs) / len(step_diffs) if step_diffs else 0.0
 
@@ -267,7 +269,8 @@ def compare_generations(
         f"  [{label}] per-step logits max_abs_diff={max_diff:.6g} "
         f"mean_abs_diff={mean_diff:.6g}"
     )
-    print(f"  [{label}] step_diffs=" + " ".join(f"{d:.3g}" for d in step_diffs))
+    print(f"  [{label}] step_diffs=" +
+          " ".join(f"{d:.3g}" for d in step_diffs))
 
     if same:
         return True
@@ -347,7 +350,8 @@ def main() -> int:
     """加载 Qwen3-4B 与 multi-LoRA manager,逐条请求生成并可选 batched prefill 校验。"""
     args = parse_args()
     requests = (
-        load_requests(args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
+        load_requests(
+            args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
     )
 
     device = pick_device()
@@ -450,7 +454,8 @@ def main() -> int:
                 all_match = all_match and match
             print(f"\ntriton_vs_peft tokens_all_match={all_match}")
 
-        print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
+        print(
+            f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
     finally:
         release_model(mgr.model)
 

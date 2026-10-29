@@ -179,8 +179,7 @@ def grouped_decode(mgr, states, names):
         out = mgr.forward_with_lora(
             input_ids=next_ids,
             attention_mask=None,
-            seq_lens=torch.ones(
-                idx.numel(), device=idx.device, dtype=torch.int32),
+            seq_lens=[1] * idx.numel(),
             lora_names=[adapter] * idx.numel(),
             past_key_values=past,
             use_cache=True,
@@ -314,7 +313,7 @@ def verify_paths(mgr, input_ids, attention_mask, names):
     返回两条记录(prefill / decode),每条是 check_close 的 dict。
     """
     bs = input_ids.shape[0]
-    decode_lens = torch.ones(bs, device=input_ids.device, dtype=torch.int32)
+    decode_lens = [1] * bs  # decode 每段 1 个 token(CPU list,不上 GPU)
 
     mp, mpast = mixed_prefill(mgr, input_ids, attention_mask, names)
     gl, gstates = grouped_prefill(mgr, input_ids, attention_mask, names)
@@ -336,8 +335,7 @@ def bench_paths(mgr, input_ids, attention_mask, names, decode_lens=None):
     """
     bs = input_ids.shape[0]
     if decode_lens is None:
-        decode_lens = torch.ones(
-            bs, device=input_ids.device, dtype=torch.int32)
+        decode_lens = [1] * bs
     iters = PREFILL_ITERS
 
     # 预热:两条路径都各跑一遍 prefill + decode,排除编译与显存分配
@@ -450,7 +448,7 @@ def main() -> int:
             input_ids = enc_full["input_ids"][:bs]
             attn = enc_full["attention_mask"][:bs]
             # decode 每行只有 1 个 token,必须显式传 seq_lens 走 decode 语义
-            decode_lens = torch.ones(bs, device=device, dtype=torch.int32)
+            decode_lens = [1] * bs
 
             (ttft, tpot), (base_ttft, base_tpot), (add_ttft, add_tpot) = measure_both(
                 mgr, input_ids, attn, names, decode_lens, measure_ttft_tpot
@@ -491,7 +489,7 @@ def main() -> int:
             names = assign_names(bs, keys)
             input_ids = enc_full["input_ids"][:bs]
             attn = enc_full["attention_mask"][:bs]
-            decode_lens = torch.ones(bs, device=device, dtype=torch.int32)
+            decode_lens = [1] * bs
             (pf, gf, pd, gd), _, (npf, ngf, npd, ngd) = measure_both(
                 mgr, input_ids, attn, names, decode_lens, bench_paths
             )

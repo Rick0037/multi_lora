@@ -98,7 +98,7 @@ def main() -> int:
     input_ids = torch.randint(
         0, cfg.vocab_size, (BATCH_SIZE, PREFILL_LEN), device=device, dtype=torch.long)
     attn = torch.ones_like(input_ids)
-    decode_lens = torch.ones(BATCH_SIZE, device=device, dtype=torch.int32)
+    decode_lens = [1] * BATCH_SIZE  # CPU list,不用建 GPU 张量
 
     def prefill(past=None):
         return mgr.forward_with_lora(

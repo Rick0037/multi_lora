@@ -170,7 +170,8 @@ def run_one_tier(mgr, enc, names, device, outdir, num_adapters,
             只关心 decode 时传 ("decode",),就少开一个窗口、少写一个 json.gz,
             延迟测量(TTFT/TPOT)不受影响。
     """
-    decode_lens = torch.ones(BATCH_SIZE, device=device, dtype=torch.int32)
+    # decode 每段 1 个 token;CPU 上的 list 即可,不用建 GPU 张量
+    decode_lens = [1] * BATCH_SIZE
 
     def prefill():
         return mgr.forward_with_lora(

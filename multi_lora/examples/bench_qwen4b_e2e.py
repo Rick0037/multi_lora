@@ -141,7 +141,8 @@ def main() -> int:
         input_ids = enc["input_ids"]
         attn = enc["attention_mask"]
         batch, seq_len = input_ids.shape
-        lora_names = mgr.registry.normalize_names([n for n, _ in DEFAULT_REQUESTS])
+        lora_names = mgr.registry.normalize_names(
+            [n for n, _ in DEFAULT_REQUESTS])
         print(
             f"batch={batch} prompt_len={seq_len} "
             f"wrapped_modules={len(mgr.lora_wrappers)} "
@@ -161,7 +162,7 @@ def main() -> int:
         out = prefill()
         past = out.past_key_values
         next_ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
-        decode_lens = torch.ones(batch, device=input_ids.device, dtype=torch.int32)
+        decode_lens = [1] * batch  # CPU list,不用建 GPU 张量
         for _ in range(args.warmup):
             out = mgr.forward_with_lora(
                 input_ids=next_ids,
@@ -229,7 +230,8 @@ def main() -> int:
             f"\nend-to-end: {total:.1f} ms for {args.num_decode} tokens "
             f"(batch={batch})"
         )
-        print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
+        print(
+            f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
     finally:
         release_model(mgr.model)
 
