@@ -50,3 +50,40 @@ def test_pool_eviction_lru():
             pool.get_slot_id(None),
         ]
     )
+
+
+def test_pool_clears_modules_missing_from_new_adapter():
+    """换入模块集合更小的 adapter 时,它没有的模块必须归零,不能残留上一个 adapter 的权重。"""
+    pool = LoRAMemoryPool(
+        max_loras_per_batch=1,
+        max_lora_rank=8,
+        device=torch.device("cpu"),
+        dtype=torch.float32,
+    )
+    wide = AdapterWeights(
+        rank=4,
+        scaling=0.5,
+        modules={
+            "attn": (torch.randn(4, 8), torch.randn(16, 4)),
+            "mlp": (torch.randn(4, 8), torch.randn(16, 4)),
+        },
+    )
+    narrow = AdapterWeights(
+        rank=4,
+        scaling=0.5,
+        modules={"attn": (torch.randn(4, 8), torch.randn(16, 4))},
+    )
+    store = {"wide": wide, "narrow": narrow}
+
+    pool.prepare_lora_batch({"wide"}, weight_store=store)
+    slot = pool.get_slot_id("wide")
+    a_buf, b_buf = pool.get_module_buffers("mlp")
+    assert torch.count_nonzero(a_buf[slot]) > 0
+    assert torch.count_nonzero(b_buf[slot]) > 0
+
+    # 换入只有 attn 的 adapter:同一个槽位里 mlp 那格必须被清掉
+    pool.prepare_lora_batch({"narrow"}, weight_store=store)
+    assert pool.get_slot_id("narrow") == slot
+    a_buf, b_buf = pool.get_module_buffers("mlp")
+    assert torch.count_nonzero(a_buf[slot]) == 0
+    assert torch.count_nonzero(b_buf[slot]) == 0

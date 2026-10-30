@@ -63,8 +63,14 @@ class _GpuBuffers:
             )
 
     def write(self, slot: int, weights: AdapterWeights) -> None:
-        """把该 adapter 的权重写进槽位;先清空整个槽位,避免残留旧权重."""
+        """把该 adapter 的权重写进槽位,只写前 rank 行,余下的格靠 kernel 的 rank mask 截断.
+
+        这个 adapter 没有的模块必须清掉,否则会残留上一个 adapter 的权重(比如 qkvo 换成
+        qkvo+mlp、再换回 qkvo 时,mlp 那几个格还留着前一个 adapter 的值)。
+        """
         for key in self.A:
+            if key in weights.modules:
+                continue
             self.A[key][slot].zero_()
             self.B[key][slot].zero_()
 
