@@ -176,7 +176,9 @@ def run_one_tier(mgr, enc, names, device, outdir, num_adapters,
     def prefill():
         return mgr.forward_with_lora(
             input_ids=enc["input_ids"], attention_mask=enc["attention_mask"],
-            lora_names=names, use_cache=True)
+            lora_names=names, seq_lens=[
+                enc["input_ids"].shape[1]] * BATCH_SIZE,
+            use_cache=True)
 
     def decode(ids, past):
         return mgr.forward_with_lora(

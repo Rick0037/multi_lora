@@ -155,6 +155,7 @@ def main() -> int:
                 input_ids=input_ids,
                 attention_mask=attn,
                 lora_names=lora_names,
+                seq_lens=[seq_len] * batch,
                 use_cache=True,
             )
 

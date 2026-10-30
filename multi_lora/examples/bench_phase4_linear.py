@@ -2,6 +2,11 @@
 """Micro-benchmark: 整模型 ToyLM forward_with_lora vs 逐行参考."""
 
 from __future__ import annotations
+from multi_lora.manager import MultiLoRAManager
+from multi_lora.layers import lora_delta
+from peft import LoraConfig, get_peft_model
+import torch.nn as nn
+import torch
 
 import argparse
 import sys
@@ -12,13 +17,6 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-
-import torch
-import torch.nn as nn
-from peft import LoraConfig, get_peft_model
-
-from multi_lora.layers import lora_delta
-from multi_lora.manager import MultiLoRAManager
 
 
 class ToyLM(nn.Module):
@@ -73,7 +71,8 @@ def main():
 
     def run_full():
         """整模型路径;manager 内部 batch prepare + 包装层 forward。"""
-        return mgr.forward_with_lora(x=x, lora_names=lora_names)
+        return mgr.forward_with_lora(
+            x=x, lora_names=lora_names, seq_lens=[1] * args.batch)
 
     def run_row_loop():
         """逐行参考;base linear + 每行单独 lora_delta。"""
@@ -88,7 +87,8 @@ def main():
                 continue
             a, b = mgr.pool.get_slot_weights(slot, "lin")
             # 仅更新第 i 行的 LoRA 增量
-            acc[i : i + 1] = yb[i : i + 1] + lora_delta(x[i : i + 1], a, b, s, rank=r)
+            acc[i: i + 1] = yb[i: i + 1] + \
+                lora_delta(x[i: i + 1], a, b, s, rank=r)
         return acc
 
     # 预热,避免首次 kernel/编译开销影响计时

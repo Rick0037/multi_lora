@@ -64,7 +64,7 @@ def _ref_rowwise(mgr, x, lora_names):
             continue
         a, b = mgr.pool.get_slot_weights(slot, "lin")
         # 仅更新第 i 行
-        out[i : i + 1] = yb[i : i + 1] + lora_delta(x[i : i + 1], a, b, s, rank=r)
+        out[i: i + 1] = yb[i: i + 1] + lora_delta(x[i: i + 1], a, b, s, rank=r)
     return out
 
 
@@ -77,7 +77,7 @@ def test_full_model_torch_matches_row_reference(tiny_linear_mgr):
     id_a, id_b = "a", "b"
     lora_names = [id_a, None, id_b]
 
-    y = mgr.forward_with_lora(x=x, lora_names=lora_names)
+    y = mgr.forward_with_lora(x=x, lora_names=lora_names, seq_lens=[1, 1, 1])
     y_ref = _ref_rowwise(mgr, x, lora_names)
     assert torch.allclose(y, y_ref, rtol=1e-4, atol=1e-5)
 
@@ -86,11 +86,13 @@ def test_kernel_input_metadata_tensor_shapes(tiny_linear_mgr):
     """build_kernel_input_metadata 产出的张量形状应符合 segment GEMM 约定。"""
     mgr = tiny_linear_mgr
     id_a = "a"
-    meta = mgr.build_kernel_input_metadata([id_a, None])
-    assert meta.weight_indices.shape == (2,)
+    meta = mgr.build_kernel_input_metadata([id_a, None], seq_lens=[1, 1])
+    # 张量按容量常驻,只保证装得下;本次 batch 有几段看 meta.bs
+    assert meta.bs == 2
+    assert meta.weight_indices.shape[0] >= meta.bs
     assert meta.lora_ranks.shape[0] == mgr.max_loras_per_batch
     # 两行各一段;indptr = [0, 1, 2]
-    assert meta.seg_indptr.tolist() == [0, 1, 2]
+    assert meta.seg_indptr[:3].tolist() == [0, 1, 2]
 
 
 def test_decode_repeated_forward(tiny_linear_mgr):
@@ -101,7 +103,7 @@ def test_decode_repeated_forward(tiny_linear_mgr):
     )
     id_a, id_b = "a", "b"
     lora_names = [id_a, id_b]
-    y1 = mgr.forward_with_lora(x=x, lora_names=lora_names)
+    y1 = mgr.forward_with_lora(x=x, lora_names=lora_names, seq_lens=[1, 1])
     # 相同输入与 lora_names 重复 forward,结果应稳定
-    y2 = mgr.forward_with_lora(x=x, lora_names=lora_names)
+    y2 = mgr.forward_with_lora(x=x, lora_names=lora_names, seq_lens=[1, 1])
     assert torch.allclose(y1, y2)

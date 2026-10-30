@@ -100,7 +100,8 @@ def load_requests(path: Path) -> List[Tuple[Optional[str], str]]:
         name = None if name_raw.lower() in ("", "base", "none") else name_raw
         prompt = "\n".join(lines[1:]).strip()
         if not prompt:
-            raise ValueError(f"empty prompt in block starting with {name_raw!r}")
+            raise ValueError(
+                f"empty prompt in block starting with {name_raw!r}")
         out.append((name, prompt))
     return out
 
@@ -110,7 +111,8 @@ def main() -> int:
     """加载 Qwen3-4B + Triton backend,执行 batch prefill 并可选对比 PEFT。"""
     args = parse_args()
     requests = (
-        load_requests(args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
+        load_requests(
+            args.prompts_file) if args.prompts_file else DEFAULT_REQUESTS
     )
 
     if not torch.cuda.is_available():
@@ -150,7 +152,8 @@ def main() -> int:
         convert_lora_layers=False,
     )
     if not isinstance(mgr._lora_backend, TritonLoRABackend):
-        print(f"ERROR: expected TritonLoRABackend, got {type(mgr._lora_backend)}")
+        print(
+            f"ERROR: expected TritonLoRABackend, got {type(mgr._lora_backend)}")
         return 1
 
     try:
@@ -184,6 +187,7 @@ def main() -> int:
             input_ids=enc["input_ids"],
             attention_mask=enc["attention_mask"],
             lora_names=lora_names,
+            seq_lens=[enc["input_ids"].shape[1]] * len(lora_names),
             use_cache=False,
         )
         logits = out.logits if hasattr(out, "logits") else out
@@ -216,7 +220,8 @@ def main() -> int:
             if suffixes is None and not ok:
                 return 1
 
-        print(f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
+        print(
+            f"pool_total_evictions={mgr.pool.eviction_policy.eviction_count}")
         print("OK: forward_with_lora prefill completed")
     finally:
         release_model(mgr.model)

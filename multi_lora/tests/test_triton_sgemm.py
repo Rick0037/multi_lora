@@ -81,6 +81,8 @@ def test_triton_matches_torch_full_model(cuda_mgr_pair):
         """pattern 里的名字就是内部 id,原样返回。"""
         return [n if n else None for n in pattern]
 
-    y_t = torch_mgr.forward_with_lora(x=x, lora_names=_ids(torch_mgr))
-    y_tr = triton_mgr.forward_with_lora(x=x, lora_names=_ids(triton_mgr))
+    y_t = torch_mgr.forward_with_lora(
+        x=x, lora_names=_ids(torch_mgr), seq_lens=[1] * len(pattern))
+    y_tr = triton_mgr.forward_with_lora(
+        x=x, lora_names=_ids(triton_mgr), seq_lens=[1] * len(pattern))
     assert torch.allclose(y_t, y_tr, rtol=1e-2, atol=1e-2)

@@ -119,6 +119,7 @@ def mixed_prefill(mgr, input_ids, attention_mask, names):
         input_ids=input_ids,
         attention_mask=attention_mask,
         lora_names=names,
+        seq_lens=[input_ids.shape[1]] * len(names),
         use_cache=True,
     )
     return out.logits, out.past_key_values
@@ -140,6 +141,7 @@ def grouped_prefill(mgr, input_ids, attention_mask, names):
             input_ids=input_ids.index_select(0, idx),
             attention_mask=attention_mask.index_select(0, idx),
             lora_names=[adapter] * len(rows),
+            seq_lens=[input_ids.shape[1]] * len(rows),
             use_cache=True,
         )
         if out_logits is None:
@@ -237,6 +239,7 @@ def measure_ttft_tpot(mgr, input_ids, attention_mask, names, decode_lens):
             input_ids=input_ids,
             attention_mask=attention_mask,
             lora_names=names,
+            seq_lens=[input_ids.shape[1]] * len(names),
             use_cache=True,
         )
 
@@ -350,6 +353,7 @@ def bench_paths(mgr, input_ids, attention_mask, names, decode_lens=None):
             input_ids=input_ids,
             attention_mask=attention_mask,
             lora_names=names,
+            seq_lens=[input_ids.shape[1]] * len(names),
             use_cache=False,
         )
 
@@ -360,6 +364,7 @@ def bench_paths(mgr, input_ids, attention_mask, names, decode_lens=None):
                 input_ids=input_ids.index_select(0, idx),
                 attention_mask=attention_mask.index_select(0, idx),
                 lora_names=[adapter] * len(rows),
+                seq_lens=[input_ids.shape[1]] * len(rows),
                 use_cache=False,
             )
 

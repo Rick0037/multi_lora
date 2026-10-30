@@ -216,6 +216,7 @@ def greedy_decode_triton(
         input_ids=ids,
         attention_mask=mask,
         lora_names=names,
+        seq_lens=[ids.shape[1]] * len(names),
         use_cache=True,
     )
     past = out.past_key_values
@@ -223,8 +224,7 @@ def greedy_decode_triton(
 
     new_ids: List[torch.Tensor] = []
     step_logits: List[torch.Tensor] = []
-    # decode 阶段每行只有 1 个 token;显式传 seq_lens 才走 decode 分支,
-    # 否则 manager 会按 attention_mask 的列数当成 prefill 段长
+    # decode 阶段每行只有 1 个 token
     decode_lens = [1] * ids.size(0)  # CPU list,不用建 GPU 张量
     for _ in range(max_new_tokens):
         step_logits.append(logits)
