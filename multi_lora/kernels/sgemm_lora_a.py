@@ -89,13 +89,15 @@ def _sgemm_lora_a_kernel(
     for k in range(0, tl.cdiv(K, BLOCK_K)):
         x_tile = tl.load(  # * tl loar 通过mask去， 取数据 并限制mask的范围
             x_ptrs,
-            mask=(s_offset[:, None] < seg_len) & (k_offset[None, :] < K - k * BLOCK_K),
+            mask=(s_offset[:, None] < seg_len) & (
+                k_offset[None, :] < K - k * BLOCK_K),
             other=0.0,
         )
         # 读出来的 w_tile 是 [rank, in_dim], 需要转置成 [in_dim, rank]
         w_tile_raw = tl.load(
             w_ptrs,
-            mask=(n_offset[:, None] < N) & (k_offset[None, :] < K - k * BLOCK_K),
+            mask=(n_offset[:, None] < N) & (
+                k_offset[None, :] < K - k * BLOCK_K),
             other=0.0,
         )
         w_tile = tl.trans(w_tile_raw)  # [rank, in_dim] -> [in_dim, rank]
@@ -106,7 +108,8 @@ def _sgemm_lora_a_kernel(
 
     partial_sum = partial_sum.to(x.dtype.element_ty)
     output_ptr = (output + seg_start * output_stride_0) + (
-        s_offset[:, None] * output_stride_0 + n_offset[None, :] * output_stride_1
+        s_offset[:, None] * output_stride_0 +
+        n_offset[None, :] * output_stride_1
     )
     output_mask = (s_offset[:, None] < seg_len) & (n_offset[None, :] < N)
     tl.store(output_ptr, partial_sum, mask=output_mask)
@@ -116,11 +119,13 @@ def sgemm_lora_a_fwd(
     x: torch.Tensor,
     weights: torch.Tensor,  # * -> [OC, IC] 因为是linear出来的
     kernel_input_metadata: KernelInputMetaData,
+    output: torch.Tensor,
     stack_num: int = 1,
 ) -> torch.Tensor:
     """Host 入口;LoRA A segment SGEMM.
 
     x: (S, in_dim);weights: (K, max_rank, in_dim);output: (S, max_rank)。
+    output 由调用方给(常驻缓冲),这里只负责写,不再每次分配。
     grid 第二维 = bs(segment 数);第一维覆盖 max_len * rank 分块。
     """
     assert x.is_contiguous()
@@ -141,11 +146,12 @@ def sgemm_lora_a_fwd(
     # ? 为什么输入都是拼接在一起的， grid的第二维还是batch size
     # ! 阅读punica的论文里面的kernel 实现
     grid = (
-        triton.cdiv(kernel_input_metadata.max_len, BLOCK_M) * triton.cdiv(N, BLOCK_N),
+        triton.cdiv(kernel_input_metadata.max_len, BLOCK_M) *
+        triton.cdiv(N, BLOCK_N),
         kernel_input_metadata.bs,
     )
 
-    output = torch.empty((M, N), device=x.device, dtype=x.dtype)
+    output = output[:M, :N]  # 常驻缓冲可能比本次大, 取本次的行/列
     _sgemm_lora_a_kernel[grid](
         x,
         weights,

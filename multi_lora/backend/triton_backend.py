@@ -36,8 +36,12 @@ class TritonLoRABackend(LoRABackend):
         if not (x.is_cuda and _HAS_TRITON_KERNELS):
             return self._torch.run_lora_a_sgemm(x, weights)
         # * Triton 要求内存必须连续， 如果是切片或者索引可能不连续， 所以需要保险一下
+        out = self.mid_buffer(x.shape[0], weights.shape[-2], x)
         return sgemm_lora_a_fwd(
-            x.contiguous(), weights.contiguous(), self._int32_kernel_input_metadata()
+            x.contiguous(),
+            weights.contiguous(),
+            self._int32_kernel_input_metadata(),
+            out,
         )
 
     def run_lora_b_sgemm(

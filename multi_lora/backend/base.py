@@ -18,6 +18,24 @@ class LoRABackend(ABC):
     def __init__(self) -> None:
         """初始化时 kernel 元数据为空,需由 manager 在 forward 前注入."""
         self.kernel_input_metadata: Optional[KernelInputMetaData] = None
+        # A 阶段的中间量 (rows, max_rank),常驻复用;A 写完紧接着就被 B 读走
+        self._mid = torch.empty((0, 0))
+
+    def mid_buffer(self, rows: int, max_rank: int, like: torch.Tensor) -> torch.Tensor:
+        """取一块 (rows, max_rank) 的中间缓冲;装得下就复用,地址不变.
+
+        列宽固定为 max_rank,所以只切行 self._mid[:rows] 仍是连续张量。
+        """
+        need_new = (
+            self._mid.shape[0] < rows
+            or self._mid.shape[1] != max_rank
+            or self._mid.device != like.device
+            or self._mid.dtype != like.dtype
+        )
+        if need_new:
+            self._mid = torch.empty(
+                (rows, max_rank), dtype=like.dtype, device=like.device)
+        return self._mid[:rows]
 
     def set_kernel_input_metadata(self, metadata: KernelInputMetaData) -> None:
         """绑定本 step 的 segment / slot 元数据,供 A/B SGEMM 读取."""
