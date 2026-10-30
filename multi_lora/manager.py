@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import Dict, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional
 
 import torch
 from peft import PeftModel
@@ -13,7 +13,8 @@ from multi_lora.backend.registry import get_lora_backend
 from multi_lora.batch_info import (
     BatchLoRAInfo,
     KernelInputMetaData,
-    to_kernel_input_metadata,
+    empty_kernel_input_metadata,
+    write_kernel_input_metadata,
 )
 from multi_lora.batching import (
     forward_logits_grouped,
@@ -55,7 +56,7 @@ class MultiLoRAManager:
         eviction_policy: str = "lru",
         registry: Optional[LoRARegistry] = None,
         lora_backend: str = "torch",
-        lora_target_suffixes: Optional[Sequence[str]] = None,
+        lora_target_suffixes: Optional[List[str]] = None,
     ) -> None:
         """建 pool / backend,并把模型剥到真正执行 forward 的那一层."""
         self.model = model
@@ -81,6 +82,10 @@ class MultiLoRAManager:
         self.lora_wrappers: Dict[str, LinearWithLoRA] = {}
         # 是否还有没被替换掉的 PEFT LoraLayer(需要 disable,否则会重复算 LoRA)
         self._has_peft_layers = has_lora_layers(self.model)
+        # 常驻 GPU metadata:先是 0 容量的空版,第一次 forward 写的时候按需分配,
+        # 之后原地改写(地址不变)
+        self._resident_meta = empty_kernel_input_metadata(
+            device=self.pool.device, dtype=self.pool.dtype)
 
     @classmethod
     def from_pretrained(
@@ -92,7 +97,7 @@ class MultiLoRAManager:
         max_lora_rank: int = 64,
         eviction_policy: str = "lru",
         lora_backend: str = "torch",
-        lora_target_suffixes: Optional[Sequence[str]] = None,
+        lora_target_suffixes: Optional[List[str]] = None,
         convert_lora_layers: bool = True,
     ) -> "MultiLoRAManager":
         """加载多 adapter 的 PEFT 模型,注册进 manager,并按需替换 LoraLayer."""
@@ -147,7 +152,7 @@ class MultiLoRAManager:
 
     # ---------- 每个 forward step 的准备 ----------
 
-    def prepare_lora_batch(self, lora_names: Sequence[LoraName]) -> BatchLoRAInfo:
+    def prepare_lora_batch(self, lora_names: List[LoraName]) -> BatchLoRAInfo:
         """把本 batch 用到的 adapter 装进 GPU pool,返回槽位信息."""
         if not validate_lora_batch(
             lora_names, max_loras_per_batch=self.max_loras_per_batch
@@ -164,26 +169,30 @@ class MultiLoRAManager:
         )
         return self.pool.build_batch_info(list(lora_names))
 
+    @torch.inference_mode()
     def build_kernel_input_metadata(
-        self, lora_names: Sequence[LoraName], *, seq_lens: Optional[Sequence[int]] = None
+        self, lora_names: List[LoraName], *, seq_lens: List[int]
     ) -> KernelInputMetaData:
-        """prepare_lora_batch + 转成 kernel 读取的 GPU 张量.
+        """prepare_lora_batch + 把结果写进常驻 GPU 张量并返回.
 
-        seq_lens 是 CPU 上每段的 token 数(如 [13, 13, 22]);decode 不传(每段 1)。
+        seq_lens 是 CPU 上每段的 token 数(如 [13, 13, 22]);decode 传 []。
+        常驻张量装得下就不新建,地址跨 step 不变(CUDA Graph 依赖这点)。
         """
         batch_info = self.prepare_lora_batch(lora_names)
-        return to_kernel_input_metadata(
+        self._resident_meta = write_kernel_input_metadata(
+            self._resident_meta,
             batch_info,
             device=self.pool.device,
             dtype=self.pool.dtype,
             seq_lens=seq_lens,
         )
+        return self._resident_meta
 
     def _setup_forward_batch(
         self,
-        lora_names: Sequence[LoraName],
+        lora_names: List[LoraName],
         *,
-        seq_lens: Optional[Sequence[int]] = None,
+        seq_lens: List[int],
     ) -> None:
         """forward 前:给 backend 设置 metadata,给每个 LinearWithLoRA 注入 buffer."""
         metadata = self.build_kernel_input_metadata(
@@ -207,25 +216,22 @@ class MultiLoRAManager:
     def forward_with_lora(
         self,
         *,
-        lora_names: Sequence[LoraName],
+        lora_names: List[LoraName],
+        seq_lens: List[int],
         input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         x: Optional[torch.Tensor] = None,
-        seq_lens: Optional[Sequence[int]] = None,
         **kwargs,
     ):
         """整模型 forward:先准备 batch,再让各 LinearWithLoRA 里算 LoRA delta.
 
         torch 和 triton 两个后端都走这个入口,具体由 lora_backend 决定。
+        seq_lens 必传,是 CPU 上每段的 token 数:prefill 传 [S] * B,decode 传 [1] * B,
+        只给 x 做逐行 lora 时传 [] (每段 1 行)。
         """
-        # * (1) 看还有多少的序列
+        # * (1) 段长由调用方给
         # x 是 padded 的 [B, S, H],展平后第 i 行占 [i*S, (i+1)*S)
         # 所以每段长度必须按 padded 的 S 算,不能用 mask.sum() 的有效长度
-        if seq_lens is None and attention_mask is not None:
-            batch_size, seq_len = attention_mask.shape
-            # 段长是 host 侧数字,直接给 CPU list,不建 GPU 张量
-            seq_lens = [seq_len] * batch_size
-
         # * (2) 准备 batch:装槽位 + 生成 kernel 元数据 + 把 buffer 注入每个 wrapper(linear)
         # lora_names 本次进来的 names ['a', None, 'b']
         self._setup_forward_batch(lora_names, seq_lens=seq_lens)
@@ -255,7 +261,7 @@ class MultiLoRAManager:
         *,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
-        lora_names: Sequence[LoraName],
+        lora_names: List[LoraName],
     ) -> tuple[torch.Tensor, BatchLoRAInfo]:
         """PEFT 分组 forward(golden 参考路径,不走 kernel)."""
         batch_info = self.prepare_lora_batch(lora_names)

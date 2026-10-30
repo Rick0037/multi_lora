@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Sequence, Set
+from typing import Dict, List, Optional, Set
 
 import torch.nn as nn
 from peft.tuners.lora import LoraLayer
@@ -11,7 +11,7 @@ from multi_lora.layers import LinearWithLoRA
 from multi_lora.weights import normalize_module_key
 
 # 默认只给 attention 的 q/k/v/o 挂 LoRA
-ATTENTION_LORA_SUFFIXES = ("q_proj", "k_proj", "v_proj", "o_proj")
+ATTENTION_LORA_SUFFIXES = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 
 def get_inference_model(peft_model: nn.Module) -> nn.Module:
@@ -36,7 +36,7 @@ def replace_submodule(root: nn.Module, module_name: str, new_module: nn.Module) 
 def module_key_matches(
     module_key: str,
     *,
-    lora_target_suffixes: Optional[Sequence[str]],
+    lora_target_suffixes: Optional[List[str]],
 ) -> bool:
     """该模块名是否命中目标后缀;不传后缀表示全部命中."""
     if lora_target_suffixes is None:
@@ -60,7 +60,7 @@ def convert_lora_layers(
     model: nn.Module,
     module_keys: Set[str],
     *,
-    lora_target_suffixes: Optional[Sequence[str]] = None,
+    lora_target_suffixes: Optional[List[str]] = None,
 ) -> Dict[str, LinearWithLoRA]:
     """把命中目标的 LoraLayer 原地换成 LinearWithLoRA,返回 module_key -> wrapper."""
     wrappers: Dict[str, LinearWithLoRA] = {}

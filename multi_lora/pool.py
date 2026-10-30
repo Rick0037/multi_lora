@@ -72,7 +72,8 @@ class _GpuBuffers:
             a_cpu, b_cpu = weights.modules[key]
             #! 每个人只写自己slot位置的
             self.A[key][slot, : weights.rank].copy_(a_cpu.to(dtype=self.dtype))
-            self.B[key][slot, :, : weights.rank].copy_(b_cpu.to(dtype=self.dtype))
+            self.B[key][slot, :, : weights.rank].copy_(
+                b_cpu.to(dtype=self.dtype))
 
     def get(self, module_key: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """取出某个 module 的全部槽位权重."""
@@ -156,10 +157,11 @@ class LoRAMemoryPool:
 
     def build_batch_info(self, lora_names: List[LoraName]) -> BatchLoRAInfo:
         """按行给出槽位号,按槽位给出 rank / scaling(kernel 用槽位号去查表)."""
+        #!
         weight_indices: List[int] = []
         for name in lora_names:
             weight_indices.append(self.get_slot_id(name))
-
+        # weight_indices 实际上是本次batch的数量
         # rank / scalings 的长度是槽位总数 K,不是 batch 行数
         lora_ranks = [0] * self.max_loras_per_batch
         scalings = [0.0] * self.max_loras_per_batch

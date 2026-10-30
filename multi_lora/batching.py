@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import List, Mapping, Optional, Sequence
+from typing import List, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -16,7 +16,7 @@ from multi_lora.registry import LoraName
 
 
 def group_row_indices(
-    lora_names: Sequence[LoraName],
+    lora_names: List[LoraName],
 ) -> "OrderedDict[LoraName, List[int]]":
     """按 adapter 把行号分组,保持每组第一次出现的顺序.
 
@@ -31,7 +31,7 @@ def group_row_indices(
 
 
 def validate_lora_batch(
-    lora_names: Sequence[LoraName],
+    lora_names: List[LoraName],
     *,
     max_loras_per_batch: int,
 ) -> bool:
@@ -45,7 +45,7 @@ def forward_logits_grouped(
     *,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
-    lora_names: Sequence[LoraName],
+    lora_names: List[LoraName],
 ) -> torch.Tensor:
     """把行按 adapter 分组,各组跑一次,再按原行号写回 logits."""
     if input_ids.dim() != 2:
@@ -109,18 +109,18 @@ def forward_logits_rowwise_reference(
     *,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor],
-    lora_names: Sequence[LoraName],
+    lora_names: List[LoraName],
 ) -> torch.Tensor:
     """参考实现:每行单独跑一次 forward,再在 batch 维拼起来."""
     pieces: List[torch.Tensor] = []
 
     for i in range(input_ids.shape[0]):
-        row_ids = input_ids[i : i + 1]
+        row_ids = input_ids[i: i + 1]
 
         if attention_mask is None:
             row_mask = None
         else:
-            row_mask = attention_mask[i : i + 1]
+            row_mask = attention_mask[i: i + 1]
 
         adapter = lora_names[i]
         if adapter is None:

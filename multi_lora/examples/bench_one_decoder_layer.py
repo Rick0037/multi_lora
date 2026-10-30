@@ -103,7 +103,8 @@ def main() -> int:
     def prefill(past=None):
         return mgr.forward_with_lora(
             input_ids=input_ids, attention_mask=attn,
-            lora_names=names, past_key_values=past, use_cache=True)
+            lora_names=names, seq_lens=[PREFILL_LEN] * BATCH_SIZE,
+            past_key_values=past, use_cache=True)
 
     def decode_step(nxt, past):
         return mgr.forward_with_lora(
