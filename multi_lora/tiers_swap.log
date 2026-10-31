@@ -1,0 +1,437 @@
+=== k1swap1  RSS=  0.7 峰值=  0.7 GiB ===
+
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]
+Loading weights:   1%|          | 4/398 [00:00<00:09, 39.57it/s]
+Loading weights:   7%|▋         | 26/398 [00:00<00:02, 142.65it/s]
+Loading weights:  12%|█▏        | 46/398 [00:00<00:02, 162.72it/s]
+Loading weights:  16%|█▌        | 64/398 [00:00<00:01, 167.23it/s]
+Loading weights:  21%|██        | 82/398 [00:00<00:01, 168.02it/s]
+Loading weights:  26%|██▌       | 103/398 [00:00<00:01, 181.15it/s]
+Loading weights:  31%|███       | 124/398 [00:00<00:01, 190.33it/s]
+Loading weights:  37%|███▋      | 146/398 [00:00<00:01, 191.54it/s]
+Loading weights:  42%|████▏     | 166/398 [00:00<00:01, 192.91it/s]
+Loading weights:  47%|████▋     | 186/398 [00:01<00:01, 188.56it/s]
+Loading weights:  52%|█████▏    | 205/398 [00:01<00:01, 183.47it/s]
+Loading weights:  56%|█████▋    | 224/398 [00:01<00:00, 183.49it/s]
+Loading weights:  62%|██████▏   | 245/398 [00:01<00:00, 185.13it/s]
+Loading weights:  66%|██████▋   | 264/398 [00:01<00:00, 180.39it/s]
+Loading weights:  71%|███████   | 283/398 [00:01<00:00, 176.93it/s]
+Loading weights:  76%|███████▌  | 301/398 [00:01<00:00, 173.25it/s]
+Loading weights:  81%|████████  | 322/398 [00:01<00:00, 181.35it/s]
+Loading weights:  86%|████████▌ | 341/398 [00:01<00:00, 181.52it/s]
+Loading weights:  90%|█████████ | 360/398 [00:02<00:00, 181.78it/s]
+Loading weights:  95%|█████████▌| 379/398 [00:02<00:00, 175.55it/s]
+Loading weights: 100%|██████████| 398/398 [00:02<00:00, 179.79it/s]
+  k1swap1 模型加载完  allocated=   7672 MiB reserved=   7682 MiB
+_has_peft_layers False
+  k1swap1 pool 建完    allocated=   7762 MiB reserved=   7952 MiB  注册 2 个 adapter
+USDT:2026-10-31 20:40:48 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:40:50 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  prefill_k1swap1 窗口结束  RSS=  1.6 峰值=  8.3 GiB
+USDT:2026-10-31 20:41:27 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:41:29 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  plain_k1swap1 窗口结束  RSS=  1.7 峰值=  8.3 GiB
+done k1swap1
+=== k8swap4  RSS=  1.5 峰值=  8.3 GiB ===
+
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/398 [00:00<00:45,  8.77it/s]
+Loading weights:   6%|▌         | 22/398 [00:00<00:03, 120.44it/s]
+Loading weights:  10%|▉         | 38/398 [00:00<00:02, 137.07it/s]
+Loading weights:  15%|█▌        | 60/398 [00:00<00:02, 161.53it/s]
+Loading weights:  21%|██        | 82/398 [00:00<00:01, 174.94it/s]
+Loading weights:  26%|██▌       | 103/398 [00:00<00:01, 177.62it/s]
+Loading weights:  32%|███▏      | 126/398 [00:00<00:01, 186.96it/s]
+Loading weights:  37%|███▋      | 147/398 [00:00<00:01, 192.23it/s]
+Loading weights:  42%|████▏     | 168/398 [00:00<00:01, 196.65it/s]
+Loading weights:  47%|████▋     | 188/398 [00:01<00:01, 195.82it/s]
+Loading weights:  52%|█████▏    | 208/398 [00:01<00:00, 191.75it/s]
+Loading weights:  57%|█████▋    | 228/398 [00:01<00:00, 185.58it/s]
+Loading weights:  62%|██████▏   | 247/398 [00:01<00:00, 175.59it/s]
+Loading weights:  67%|██████▋   | 268/398 [00:01<00:00, 177.22it/s]
+Loading weights:  73%|███████▎  | 289/398 [00:01<00:00, 181.86it/s]
+Loading weights:  77%|███████▋  | 308/398 [00:01<00:00, 180.46it/s]
+Loading weights:  82%|████████▏ | 327/398 [00:01<00:00, 180.32it/s]
+Loading weights:  87%|████████▋ | 346/398 [00:01<00:00, 173.64it/s]
+Loading weights:  92%|█████████▏| 367/398 [00:02<00:00, 182.12it/s]
+Loading weights:  97%|█████████▋| 388/398 [00:02<00:00, 189.87it/s]
+Loading weights: 100%|██████████| 398/398 [00:02<00:00, 178.91it/s]
+  k8swap4 模型加载完  allocated=   7680 MiB reserved=   7796 MiB
+_has_peft_layers False
+  k8swap4 pool 建完    allocated=   8400 MiB reserved=   9444 MiB  注册 12 个 adapter
+USDT:2026-10-31 20:42:39 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:42:44 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  prefill_k8swap4 窗口结束  RSS=  2.5 峰值=  9.1 GiB
+USDT:2026-10-31 20:43:44 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:43:49 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  plain_k8swap4 窗口结束  RSS=  2.6 峰值=  9.1 GiB
+done k8swap4
+=== k32swap16  RSS=  1.6 峰值=  9.1 GiB ===
+
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/398 [00:00<00:44,  8.87it/s]
+Loading weights:   5%|▍         | 18/398 [00:00<00:03, 98.86it/s]
+Loading weights:   9%|▉         | 37/398 [00:00<00:02, 133.63it/s]
+Loading weights:  14%|█▍        | 57/398 [00:00<00:02, 157.42it/s]
+Loading weights:  20%|█▉        | 79/398 [00:00<00:01, 179.11it/s]
+Loading weights:  25%|██▍       | 98/398 [00:00<00:01, 174.03it/s]
+Loading weights:  29%|██▉       | 116/398 [00:00<00:01, 174.96it/s]
+Loading weights:  34%|███▍      | 136/398 [00:00<00:01, 181.98it/s]
+Loading weights:  39%|███▉      | 157/398 [00:00<00:01, 189.57it/s]
+Loading weights:  44%|████▍     | 177/398 [00:01<00:01, 191.14it/s]
+Loading weights:  49%|████▉     | 197/398 [00:01<00:01, 187.81it/s]
+Loading weights:  54%|█████▍    | 216/398 [00:01<00:01, 181.65it/s]
+Loading weights:  59%|█████▉    | 235/398 [00:01<00:00, 176.45it/s]
+Loading weights:  64%|██████▍   | 254/398 [00:01<00:00, 179.77it/s]
+Loading weights:  69%|██████▊   | 273/398 [00:01<00:00, 171.46it/s]
+Loading weights:  73%|███████▎  | 291/398 [00:01<00:00, 165.52it/s]
+Loading weights:  78%|███████▊  | 312/398 [00:01<00:00, 174.46it/s]
+Loading weights:  84%|████████▎ | 333/398 [00:01<00:00, 181.56it/s]
+Loading weights:  88%|████████▊ | 352/398 [00:02<00:00, 182.47it/s]
+Loading weights:  93%|█████████▎| 371/398 [00:02<00:00, 182.27it/s]
+Loading weights:  98%|█████████▊| 390/398 [00:02<00:00, 178.43it/s]
+Loading weights: 100%|██████████| 398/398 [00:02<00:00, 174.96it/s]
+  k32swap16 模型加载完  allocated=   7680 MiB reserved=   8418 MiB
+_has_peft_layers False
+  k32swap16 pool 建完    allocated=  10560 MiB reserved=  14722 MiB  注册 48 个 adapter
+USDT:2026-10-31 20:46:50 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:47:01 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  prefill_k32swap16 窗口结束  RSS=  5.9 峰值= 16.2 GiB
+USDT:2026-10-31 20:49:45 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:49:56 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  plain_k32swap16 窗口结束  RSS=  6.0 峰值= 16.4 GiB
+done k32swap16
+=== k64swap32  RSS=  2.0 峰值= 16.4 GiB ===
+
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/398 [00:00<01:03,  6.20it/s]
+Loading weights:   4%|▍         | 16/398 [00:00<00:05, 71.37it/s]
+Loading weights:   9%|▉         | 37/398 [00:00<00:02, 121.48it/s]
+Loading weights:  14%|█▍        | 57/398 [00:00<00:02, 141.35it/s]
+Loading weights:  18%|█▊        | 72/398 [00:00<00:02, 143.08it/s]
+Loading weights:  23%|██▎       | 92/398 [00:00<00:02, 152.65it/s]
+Loading weights:  28%|██▊       | 110/398 [00:00<00:01, 160.72it/s]
+Loading weights:  32%|███▏      | 127/398 [00:00<00:01, 154.41it/s]
+Loading weights:  37%|███▋      | 146/398 [00:01<00:01, 163.49it/s]
+Loading weights:  41%|████      | 163/398 [00:01<00:01, 160.14it/s]
+Loading weights:  45%|████▌     | 180/398 [00:01<00:01, 159.93it/s]
+Loading weights:  50%|████▉     | 198/398 [00:01<00:01, 165.53it/s]
+Loading weights:  54%|█████▍    | 215/398 [00:01<00:01, 157.29it/s]
+Loading weights:  59%|█████▉    | 234/398 [00:01<00:01, 157.52it/s]
+Loading weights:  63%|██████▎   | 250/398 [00:01<00:00, 150.24it/s]
+Loading weights:  67%|██████▋   | 267/398 [00:01<00:00, 152.18it/s]
+Loading weights:  71%|███████   | 283/398 [00:01<00:00, 145.59it/s]
+Loading weights:  75%|███████▌  | 300/398 [00:02<00:00, 149.46it/s]
+Loading weights:  79%|███████▉  | 316/398 [00:02<00:00, 149.17it/s]
+Loading weights:  83%|████████▎ | 332/398 [00:02<00:00, 149.17it/s]
+Loading weights:  87%|████████▋ | 347/398 [00:02<00:00, 143.95it/s]
+Loading weights:  92%|█████████▏| 366/398 [00:02<00:00, 155.76it/s]
+Loading weights:  96%|█████████▌| 382/398 [00:02<00:00, 156.20it/s]
+Loading weights: 100%|██████████| 398/398 [00:02<00:00, 149.81it/s]
+  k64swap32 模型加载完  allocated=   7680 MiB reserved=  10582 MiB
+_has_peft_layers False
+  k64swap32 pool 建完    allocated=  13440 MiB reserved=  21652 MiB  注册 96 个 adapter
+USDT:2026-10-31 20:57:42 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 20:58:02 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  prefill_k64swap32 窗口结束  RSS= 10.6 峰值= 29.5 GiB
+USDT:2026-10-31 21:02:55 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 21:03:17 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  plain_k64swap32 窗口结束  RSS= 10.7 峰值= 29.7 GiB
+done k64swap32
+=== k64swap0  RSS=  2.8 峰值= 29.7 GiB ===
+
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/398 [00:00<01:11,  5.59it/s]
+Loading weights:   5%|▌         | 20/398 [00:00<00:04, 85.21it/s]
+Loading weights:   9%|▉         | 36/398 [00:00<00:03, 109.07it/s]
+Loading weights:  12%|█▏        | 49/398 [00:00<00:03, 109.67it/s]
+Loading weights:  17%|█▋        | 67/398 [00:00<00:02, 131.57it/s]
+Loading weights:  21%|██        | 82/398 [00:00<00:02, 123.68it/s]
+Loading weights:  25%|██▍       | 99/398 [00:00<00:02, 133.10it/s]
+Loading weights:  29%|██▊       | 114/398 [00:00<00:02, 133.09it/s]
+Loading weights:  32%|███▏      | 128/398 [00:01<00:02, 133.93it/s]
+Loading weights:  37%|███▋      | 147/398 [00:01<00:01, 147.61it/s]
+Loading weights:  42%|████▏     | 168/398 [00:01<00:01, 164.65it/s]
+Loading weights:  47%|████▋     | 187/398 [00:01<00:01, 170.17it/s]
+Loading weights:  52%|█████▏    | 205/398 [00:01<00:01, 169.94it/s]
+Loading weights:  56%|█████▌    | 223/398 [00:01<00:01, 169.33it/s]
+Loading weights:  62%|██████▏   | 245/398 [00:01<00:00, 175.72it/s]
+Loading weights:  66%|██████▌   | 263/398 [00:01<00:00, 173.98it/s]
+Loading weights:  71%|███████   | 281/398 [00:01<00:00, 166.60it/s]
+Loading weights:  76%|███████▌  | 301/398 [00:02<00:00, 170.98it/s]
+Loading weights:  81%|████████  | 322/398 [00:02<00:00, 179.20it/s]
+Loading weights:  85%|████████▌ | 340/398 [00:02<00:00, 175.42it/s]
+Loading weights:  90%|████████▉ | 358/398 [00:02<00:00, 174.56it/s]
+Loading weights:  95%|█████████▍| 378/398 [00:02<00:00, 181.02it/s]
+Loading weights: 100%|██████████| 398/398 [00:02<00:00, 155.48it/s]
+  k64swap0 模型加载完  allocated=   7680 MiB reserved=  13462 MiB
+_has_peft_layers False
+  k64swap0 pool 建完    allocated=  13440 MiB reserved=  18952 MiB  注册 64 个 adapter
+USDT:2026-10-31 21:10:02 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 21:10:04 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  prefill_k64swap0 窗口结束  RSS=  8.0 峰值= 29.7 GiB
+USDT:2026-10-31 21:10:30 70578:70578 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-10-31 21:10:32 70578:70578 SyncActivityProfilerHandler.cpp:46] profiler_stop
+  plain_k64swap0 窗口结束  RSS=  8.0 峰值= 29.7 GiB
+done k64swap0
+
+表1 延迟与吞吐
+       tier rank_mix           TTFT(ms)   TPOT(ms)     tok/s
+------------------------------------------------------------
+    k1swap1 r32:1                 93.48      88.43     723.7
+    k8swap4 r8:2 r16:2 r32:2 r64:2     159.54     155.07     412.7
+  k32swap16 r8:8 r16:8 r32:8 r64:8     424.09     421.21     151.9
+  k64swap32 r8:16 r16:16 r32:16 r64:16     771.99     762.89      83.9
+   k64swap0 r8:16 r16:16 r32:16 r64:16      66.78      62.39    1025.8
+
+表2 单次 forward 的 CPU/GPU 占比(wait = CPU 干等 GPU 的时间,不计入 CPU;plain 是真实 decode,graph 是同一份 decode 录成 graph)
+       tier    stage   CPU(ms)  wait(ms)   GPU(ms)    GPU%  launch/step
+-----------------------------------------------------------------------
+    k1swap1  prefill    84.497     8.312    58.371   40.9%       2473.0
+    k1swap1    plain    88.211     5.399    29.401   25.0%       3011.0
+    k8swap4  prefill   168.431    21.172    71.920   29.9%       2761.0
+    k8swap4    plain   154.808    18.317    41.107   21.0%       3299.0
+  k32swap16  prefill   410.480    74.300   119.711   22.6%       4057.0
+  k32swap16    plain   417.478    72.381    87.420   17.3%       4595.0
+  k64swap32  prefill   762.121   144.624   182.728   19.3%       5785.0
+  k64swap32    plain   818.127   141.757   150.106   15.5%       6323.0
+   k64swap0  prefill    52.127     3.857    55.781   51.7%       2329.0
+   k64swap0    plain    59.093     0.812    25.924   30.5%       2867.0
+
+表3 tier=k1swap1 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         4.25%      87.556ms         6.24%     128.631ms      33.895us     612.251ms        69.93%     612.251ms     161.331us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     364.078ms        41.58%     364.078ms     134.844us          2700  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     192.316ms        21.96%     192.316ms     178.070us          1080  
+                                            aten::copy_        13.45%     277.374ms        32.89%     678.162ms      36.578us      82.558ms         9.43%     111.353ms       6.006us         18540  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us      59.014ms         6.74%      59.014ms      13.427us          4395  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      54.391ms         6.21%      54.391ms       3.626ms            15  
+                                              aten::mul         3.02%      62.225ms         4.73%      97.502ms      13.742us      43.221ms         4.94%      43.221ms       6.092us          7095  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      27.525ms         3.14%      27.525ms      12.743us          2160  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      26.930ms         3.08%      26.930ms      12.467us          2160  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      22.118ms         2.53%      22.118ms       5.102us          4335  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 2.062s
+Self CUDA time total: 875.566ms
+
+表3 tier=k1swap1 plain top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         4.61%      94.794ms         6.76%     138.884ms      36.596us     174.895ms        39.66%     174.895ms      46.086us          3795  
+                                            aten::copy_        11.65%     239.480ms        30.38%     624.378ms      33.705us     102.028ms        23.13%     131.099ms       7.077us         18525  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      92.153ms        20.90%      92.153ms      42.663us          2160  
+                     aten::_efficient_attention_forward         0.40%       8.264ms         1.79%      36.700ms      67.963us      60.226ms        13.66%      61.215ms     113.362us           540  
+fmha_cutlassF_bf16_aligned_64x128_rf_sm80(PyTorchMem...         0.00%       0.000us         0.00%       0.000us       0.000us      60.226ms        13.66%      60.226ms     111.529us           540  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us      59.132ms        13.41%      59.132ms      13.454us          4395  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      35.037ms         7.94%      35.037ms      10.814us          3240  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us      31.978ms         7.25%      31.978ms      59.219us           540  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      31.727ms         7.19%      31.727ms      29.377us          1080  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      28.536ms         6.47%      28.536ms      13.211us          2160  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 2.056s
+Self CUDA time total: 441.022ms
+
+表3 tier=k8swap4 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         2.93%     114.676ms         4.28%     167.329ms      44.092us     633.588ms        58.73%     633.588ms     166.953us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     376.554ms        34.91%     376.554ms     139.464us          2700  
+                                            aten::copy_        17.42%     681.597ms        47.75%        1.869s      35.194us     252.862ms        23.44%     309.658ms       5.832us         53100  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     220.871ms        20.47%     220.871ms      12.727us         17355  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     199.445ms        18.49%     199.445ms     184.672us          1080  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      56.224ms         5.21%      56.224ms       3.748ms            15  
+                                              aten::mul         2.13%      83.220ms         3.32%     129.763ms      18.289us      44.492ms         4.12%      44.492ms       6.271us          7095  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      36.811ms         3.41%      36.811ms      17.042us          2160  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      25.212ms         2.34%      25.212ms      11.672us          2160  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      23.023ms         2.13%      23.023ms       5.311us          4335  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 3.914s
+Self CUDA time total: 1.079s
+
+表3 tier=k8swap4 plain top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                            aten::copy_        17.76%     618.207ms        49.84%        1.735s      32.680us     271.635ms        44.05%     328.795ms       6.194us         53085  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     221.089ms        35.86%     221.089ms      12.739us         17355  
+                                               aten::mm         2.86%      99.380ms         4.17%     145.121ms      38.240us     174.230ms        28.26%     174.230ms      45.910us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      91.745ms        14.88%      91.745ms      42.474us          2160  
+                     aten::_efficient_attention_forward         0.24%       8.527ms         1.07%      37.341ms      69.151us      60.165ms         9.76%      61.154ms     113.248us           540  
+fmha_cutlassF_bf16_aligned_64x128_rf_sm80(PyTorchMem...         0.00%       0.000us         0.00%       0.000us       0.000us      60.165ms         9.76%      60.165ms     111.416us           540  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      42.663ms         6.92%      42.663ms       5.643us          7560  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      36.800ms         5.97%      36.800ms      17.037us          2160  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us      31.815ms         5.16%      31.815ms      58.916us           540  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      31.670ms         5.14%      31.670ms      29.324us          1080  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 3.481s
+Self CUDA time total: 616.602ms
+
+表3 tier=k32swap16 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                            aten::copy_        28.10%        2.487s        74.70%        6.611s      33.787us     951.366ms        52.98%        1.180s       6.029us        195660  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     883.849ms        49.22%     883.849ms      12.773us         69195  
+                                               aten::mm         1.01%      89.058ms         1.46%     129.003ms      33.993us     646.379ms        36.00%     646.379ms     170.324us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     383.839ms        21.38%     383.839ms     142.162us          2700  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     203.539ms        11.34%     203.539ms     188.462us          1080  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      57.463ms         3.20%      57.463ms       3.831ms            15  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      46.401ms         2.58%      46.401ms       1.790us         25920  
+                                              aten::mul         0.69%      61.317ms         1.11%      98.147ms      13.833us      45.417ms         2.53%      45.417ms       6.401us          7095  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      38.876ms         2.17%      38.876ms      17.998us          2160  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      25.577ms         1.42%      25.577ms      11.841us          2160  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 8.850s
+Self CUDA time total: 1.796s
+
+表3 tier=k32swap16 plain top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                            aten::copy_        25.83%        2.317s        72.70%        6.522s      33.335us     968.666ms        73.87%        1.197s       6.118us        195645  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     883.893ms        67.41%     883.893ms      12.774us         69195  
+                                               aten::mm         1.05%      94.577ms         1.54%     138.590ms      36.519us     172.256ms        13.14%     172.256ms      45.390us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      89.644ms         6.84%      89.644ms      41.502us          2160  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      76.915ms         5.87%      76.915ms       2.849us         27000  
+                     aten::_efficient_attention_forward         0.09%       8.009ms         0.40%      35.624ms      65.970us      60.091ms         4.58%      61.076ms     113.104us           540  
+fmha_cutlassF_bf16_aligned_64x128_rf_sm80(PyTorchMem...         0.00%       0.000us         0.00%       0.000us       0.000us      60.091ms         4.58%      60.091ms     111.279us           540  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      36.815ms         2.81%      36.815ms      17.044us          2160  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us      31.972ms         2.44%      31.972ms      59.207us           540  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      31.667ms         2.41%      31.667ms      29.321us          1080  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 8.971s
+Self CUDA time total: 1.311s
+
+表3 tier=k64swap32 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                            aten::copy_        29.00%        4.693s        79.18%       12.813s      33.217us        1.882s        68.66%        2.339s       6.063us        385740  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us        1.768s        64.50%        1.768s      12.782us        138315  
+                                               aten::mm         0.54%      87.092ms         0.80%     129.410ms      34.100us     646.140ms        23.57%     646.140ms     170.261us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     383.732ms        14.00%     383.732ms     142.123us          2700  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     203.424ms         7.42%     203.424ms     188.356us          1080  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      92.755ms         3.38%      92.755ms       1.789us         51840  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      57.439ms         2.10%      57.439ms       3.829ms            15  
+                                              aten::mul         0.38%      61.047ms         0.59%      95.878ms      13.514us      45.870ms         1.67%      45.870ms       6.465us          7095  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      43.773ms         1.60%      43.773ms      20.265us          2160  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      35.104ms         1.28%      35.104ms      16.252us          2160  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 16.183s
+Self CUDA time total: 2.741s
+
+表3 tier=k64swap32 plain top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                            aten::copy_        30.25%        5.154s        78.32%       13.345s      34.596us        1.901s        84.43%        2.358s       6.114us        385725  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us        1.770s        78.63%        1.770s      12.800us        138315  
+                                               aten::mm         0.55%      93.194ms         0.82%     140.336ms      36.979us     169.425ms         7.52%     169.425ms      44.644us          3795  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     122.787ms         5.45%     122.787ms       2.320us         52920  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      87.052ms         3.87%      87.052ms      40.302us          2160  
+                     aten::_efficient_attention_forward         0.05%       7.956ms         0.21%      35.559ms      65.850us      60.108ms         2.67%      61.093ms     113.136us           540  
+fmha_cutlassF_bf16_aligned_64x128_rf_sm80(PyTorchMem...         0.00%       0.000us         0.00%       0.000us       0.000us      60.108ms         2.67%      60.108ms     111.311us           540  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      39.058ms         1.73%      39.058ms      18.083us          2160  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      33.718ms         1.50%      33.718ms      15.610us          2160  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us      31.888ms         1.42%      31.888ms      59.052us           540  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 17.038s
+Self CUDA time total: 2.252s
+
+表3 tier=k64swap0 prefill top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.36%      89.242ms         9.21%     129.210ms      34.047us     612.382ms        73.19%     612.382ms     161.366us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     363.928ms        43.49%     363.928ms     134.788us          2700  
+ampere_bf16_s1688gemm_bf16_128x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us     192.512ms        23.01%     192.512ms     178.252us          1080  
+         ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_tn         0.00%       0.000us         0.00%       0.000us       0.000us      54.486ms         6.51%      54.486ms       3.632ms            15  
+                                              aten::mul         4.34%      60.903ms         6.99%      98.123ms      13.830us      43.726ms         5.23%      43.726ms       6.163us          7095  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      42.616ms         5.09%      42.616ms      19.730us          2160  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      34.591ms         4.13%      34.591ms      16.014us          2160  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      22.614ms         2.70%      22.614ms       5.217us          4335  
+                         aten::_flash_attention_forward         0.69%       9.653ms         1.93%      27.099ms      50.184us      20.210ms         2.42%      20.210ms      37.426us           540  
+void pytorch_flash::flash_fwd_kernel<Flash_fwd_kerne...         0.00%       0.000us         0.00%       0.000us       0.000us      20.210ms         2.42%      20.210ms      37.426us           540  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 1.403s
+Self CUDA time total: 836.718ms
+
+表3 tier=k64swap0 plain top-10 kernel
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         6.28%      92.116ms         9.23%     135.430ms      35.687us     169.583ms        43.61%     169.583ms      44.686us          3795  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      86.949ms        22.36%      86.949ms      40.254us          2160  
+                     aten::_efficient_attention_forward         0.57%       8.290ms         2.42%      35.552ms      65.838us      60.174ms        15.47%      61.160ms     113.259us           540  
+fmha_cutlassF_bf16_aligned_64x128_rf_sm80(PyTorchMem...         0.00%       0.000us         0.00%       0.000us       0.000us      60.174ms        15.47%      60.174ms     111.434us           540  
+                                   _sgemm_lora_b_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      39.070ms        10.05%      39.070ms      18.088us          2160  
+                                            aten::copy_         2.56%      37.610ms         4.84%      70.950ms      12.749us      38.244ms         9.84%      38.244ms       6.872us          5565  
+                                   _sgemm_lora_a_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      33.566ms         8.63%      33.566ms      15.540us          2160  
+ampere_bf16_s16816gemm_bf16_128x64_ldg8_f2f_stages_6...         0.00%       0.000us         0.00%       0.000us       0.000us      31.955ms         8.22%      31.955ms      59.176us           540  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      31.611ms         8.13%      31.611ms      29.269us          1080  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      30.353ms         7.81%      30.353ms      28.104us          1080  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 1.467s
+Self CUDA time total: 388.855ms
+
+
+(multi-lora) ~/autodl-tmp/code/multi_lora-main$ cd /root/autodl-tmp/code/multi_lora-main
+.venv/bin/python multi_lora/examples/analyze_trace.py traces/02_fix_batch_each_cost
+skip 1 derived trace(s): ['plain_k1swap1.bucketed.json.gz']
+  derived -> plain_k1swap1.bucketed.json.gz
+  derived -> plain_k32swap16.bucketed.json.gz
+  derived -> plain_k64swap0.bucketed.json.gz
+  derived -> plain_k64swap32.bucketed.json.gz
+  derived -> plain_k8swap4.bucketed.json.gz
+  derived -> prefill_k1swap1.bucketed.json.gz
+  derived -> prefill_k32swap16.bucketed.json.gz
+  derived -> prefill_k64swap0.bucketed.json.gz
+  derived -> prefill_k64swap32.bucketed.json.gz
+  derived -> prefill_k8swap4.bucketed.json.gz
+
+trace                  steps    wall base_gemm lora_ab_g adapter_i adapter_h other_gpu     gap   gap% launch/f
+--------------------------------------------------------------------------------------------------------------
+plain_k1swap1.json.gz     15 137.036    15.642     3.710     0.194     3.975     5.880 107.635  78.5%   3376.0
+plain_k32swap16.json.gz    15 598.036    15.457     4.139     0.193    58.959     8.673 510.617  85.4%   9280.0
+plain_k64swap0.json.gz    15  97.775    15.284     4.842     0.193     0.035     5.570  71.852  73.5%   2944.0
+plain_k64swap32.json.gz    15 1135.845    15.269     4.852     0.193   118.059    11.733 985.739  86.8%  15616.0
+plain_k8swap4.json.gz     15 232.060    15.593     4.151     0.194    14.772     6.396 190.953  82.3%   4528.0
+prefill_k1swap1.json.gz    15 137.481    42.066     3.630     0.004     4.033     8.638  79.110  57.5%   2911.0
+prefill_k32swap16.json.gz    15 589.972    44.418     4.297     0.004    59.027    11.964 470.262  79.7%   8815.0
+prefill_k64swap0.json.gz    15  93.539    42.076     5.147     0.005     0.100     8.454  37.758  40.4%   2479.0
+prefill_k64swap32.json.gz    15 1078.875    44.402     5.258     0.005   117.967    15.096 896.148  83.1%  15151.0
+prefill_k8swap4.json.gz    15 260.922    43.546     4.135     0.005    14.817     9.418 189.002  72.4%   4063.0
+
+单位 ms/forward;gap = 墙钟 - GPU 忙时(即 launch 空档与 CPU 阻塞)
+
+=== plain: 单步 ms(次数/步), 按平均耗时降序 ===
+item                   n=k1swap1     n=k32swap16      n=k64swap0     n=k64swap32       n=k8swap4
+------------------------------------------------------------------------------------------------
+copy_memset         3.975 ( 365)   58.959 (4685)    0.035 (  77)  118.059 (9293)   14.772 (1229)
+base_gemm          11.627 ( 433)   11.451 ( 433)   11.273 ( 433)   11.262 ( 433)   11.582 ( 433)
+elementwise         5.279 (2035)    8.073 (3619)    4.968 (1891)   11.133 (5347)    5.796 (2323)
+attention           4.015 (  36)    4.006 (  36)    4.012 (  36)    4.007 (  36)    4.011 (  36)
+lora_b              1.902 ( 144)    2.454 ( 144)    2.605 ( 144)    2.604 ( 144)    2.453 ( 144)
+lora_a              1.808 ( 144)    1.684 ( 144)    2.238 ( 144)    2.248 ( 144)    1.698 ( 144)
+other               0.558 ( 146)    0.556 ( 146)    0.558 ( 146)    0.557 ( 146)    0.557 ( 146)
+cat_kv              0.237 (  73)    0.236 (  73)    0.236 (  73)    0.236 (  73)    0.237 (  73)
+Σ                  29.401 (3376)   87.420 (9280)   25.924 (2944)  150.106 (15616)   41.107 (4528)
+
+=== prefill: 单步 ms(次数/步), 按平均耗时降序 ===
+item                   n=k1swap1     n=k32swap16      n=k64swap0     n=k64swap32       n=k8swap4
+------------------------------------------------------------------------------------------------
+base_gemm          40.719 ( 253)   42.989 ( 253)   40.728 ( 253)   42.973 ( 253)   42.148 ( 253)
+copy_memset         4.033 ( 438)   59.027 (4758)    0.100 ( 150)  117.967 (9366)   14.817 (1302)
+elementwise         6.849 (1604)   10.061 (3188)    6.658 (1460)   13.193 (4916)    7.556 (1892)
+lora_b              1.835 ( 144)    2.592 ( 144)    2.841 ( 144)    2.918 ( 144)    2.454 ( 144)
+lora_a              1.795 ( 144)    1.705 ( 144)    2.306 ( 144)    2.340 ( 144)    1.681 ( 144)
+attention           1.347 (  36)    1.428 (  36)    1.347 (  36)    1.429 (  36)    1.397 (  36)
+cat_kv              1.055 ( 145)    1.121 ( 145)    1.056 ( 145)    1.120 ( 145)    1.098 ( 145)
+other               0.738 ( 147)    0.787 ( 147)    0.745 ( 147)    0.788 ( 147)    0.768 ( 147)
+Σ                  58.371 (2911)  119.711 (8815)   55.781 (2479)  182.728 (15151)   71.920 (4063)
+
+csv -> traces/02_fix_batch_each_cost/bucket_summary.csv, bucket_detail.csv, kernel_group_summary.csv
