@@ -103,9 +103,10 @@ def main():
     print_report([row])
     g = row["graph"]
     print(
-        f"\nTPOT: 非 graph {row['tpot']:.2f} ms -> 换入+replay {g['tpot']:.2f} ms"
+        f"\nTPOT: DynamicCache口径 {row['tpot']:.2f} ms | StaticCache口径 "
+        f"{row['tpot_static']:.2f} ms -> 换入+replay {g['tpot']:.2f} ms"
         f"  (replay-only 基准 {g['tpot_replay_only']:.2f} ms;"
-        f"graph 省 launch ≈ {row['gplain']['cpu_ms'] - g['cpu_ms']:.0f} ms/步)"
+        f"graph vs gplain 省 launch ≈ {row['gplain']['cpu_ms'] - g['cpu_ms']:.0f} ms/步)"
     )
     # 分桶纯 CPU,放最后
     return subprocess.call(
