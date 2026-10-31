@@ -9,12 +9,15 @@
 
 - 生产 kernel 由 `multi_lora/kernels/__init__.py` 直接导出 **基础版** A/B kernel。
 - A、B 两个 kernel 都没有 autotune、软件流水、`EVEN_K`、向量化提示。
-- 设备元数据已改为常驻复用(T2)，但 LoRA 中间张量仍是每步 `torch.empty`(T4)。
-- KV cache 仍是每步 `aten::cat` 新建，指针每步漂移，CUDA Graph 前必须换成预分配(T5)。
-- 没有 CUDA Graph。
+- 设备元数据与 A 阶段中间张量已全部常驻复用(T2/T4)，地址跨 step 不再变。
+- KV cache 每步 `aten::cat` 的问题实测无法用 `StaticCache` 解决：它只消掉一半 cat，
+  却多出 1352 次 `empty` + 864 次 `index_copy`，launch 总数反而上升，该方向已排除。
+- CUDA Graph：机制在 `multi_lora/graph_decode.py`（`DecodeStep` + `capture_graph`），
+  bench 只是调用它录一档真实 decode（batch=64）；库里还没有多档 batch、请求进出的支持。
 
-已完成 **T1**(去 `.item()`)、**T2**(常驻 metadata)、**T3**(换入不再全槽清零)。
-后续任务按下面「任务总表」的编号走，T4 起。
+已完成 **T1**(去 `.item()`)、**T2**(常驻 metadata)、**T3**(换入不再全槽清零)、
+**T4**(复用 A 的 `mid`)、**T5**(真实 decode 的 CUDA Graph,仅 bench 单档 batch=64)。
+后续任务按下面「任务总表」的编号走，T6 起。
 
 ---
 
@@ -51,12 +54,39 @@
 
 - `ProfilerStep*` 容器记录必须剔除：它的 device time = 整窗口跨度（含空档），
   会把 busy 重复计一遍（实测 50 步多算 4511ms）。
-- 表2 的 `cpu_ms` 是 **CPU 算子净时间**，不是墙钟（墙钟 = cpu_ms + 容器空档）。
+- 表2 的 `cpu_ms` 是 **CPU 上算子的净时间**，不是墙钟；`cudaDeviceSynchronize` 等同步等待单列为 `wait_ms`。
 - **`wall` / `gap` 不能跨进程比**：每个进程的第一个 profiler 窗口固定贵 30~55ms
   （kineto/CUPTI 初始化 + 首次逐算子记录）。同一份 GPU 数据在三种跑法下 busy 为
   20.653 / 20.614 / 20.594（≤0.3%），而 wall 为 158.97 / 113.64 / 100.80。
 - 端到端延迟（表1）当前报不住：同配置三次 TPOT = 71.83 / 86.75 / 90.01（±20%），
   至少重复 2~3 次取区间。
+
+### T5 基线：真实 decode 的 CUDA Graph（v5，batch=64 / 64 个 adapter）
+
+| 窗口 | wall | gpu_busy | gap | gap% | launch/步 | CPU launch/步 |
+|---|---|---|---|---|---|---|
+| decode（`use_cache=False`，非 graph） | 94.37 | 20.54 | 73.82 | 78.2% | 2582 | 2512 |
+| graph（真实 decode，replay） | **28.41** | 27.87 | **0.54** | **1.9%** | 2939 | **1** |
+
+- wall 降 65.96 ms（**3.3 倍**）；CPU 发指令从 2512 次/步变成 1 次 `cudaGraphLaunch`。
+- busy 反而涨 7.33 ms 是正常的：graph 走的是真实 decode（每步写 KV + 更新 mask/位置，多 357 次 kernel），
+  而 94.37 那一行是 `use_cache=False` 的不写版。
+- 对齐校验：前 5 步 logits 与不录 graph 的路径一致（已改成 `tests/test_graph_decode.py` 的两个用例）。
+- 端到端 TPOT（replay + 采样，重复 3 次）：graph **30.21 / 30.22 / 30.21 ms**，极差 0.01 ms；
+  非 graph 53.18 / 57.50 / 59.83 ms（极差 ~12%）。graph 把步间抖动也一起消除了。
+- **自此 busy ≈ wall**：之前“kernel 优化只降 busy 不降 wall”的结论不再成立，T10–T15 直接就是在降延迟。
+
+**实现结构**
+
+| 位置 | 职责 |
+|---|---|
+| `multi_lora/graph_decode.py` | `DecodeStep`（KV + 4 个常驻张量，带 `new`/`like_new`/`rewind`/`prefill`/`run`）与 `capture_graph`（彩排 + 录制） |
+| `run_graph_tier`（bench） | 只做测速：建 step → 录制 → replay+采样测 TPOT → profiler 窗口 |
+| `tests/test_graph_decode.py` | 只做正确性：replay vs 直接跑逐 5 步比 logits；capture 前后常驻张量地址不变 |
+
+重构后复测（v6）：graph wall 30.00 / busy 29.36 / gap% 2.1 / TPOT 29.24。
+其中 `other_gpu_launch` 仍是 2073，与重构前逐项一致；wall +5.6% 而 TPOT −3.2%，方向相反且幅度小于
+非 graph 路径自身的 12% 抖动 → 分层重构只改了代码归属，**执行路径未变**。
 
 ---
 
@@ -68,21 +98,20 @@
 |---|---|---|---|---|
 | T1 | 去 `.item()`，CPU 预算 lens/indptr/max_len | CPU | P0-5 | 完成：decode wall 113.64→106.75 |
 | T2 | 常驻 metadata，manager 持有，每步原地改写 | CPU | P0-5 | 完成：地址稳定，收益 ≈0.5~1.5ms |
-| T3 | 换入不再全槽 `zero_()`，只清缺失模块 | CPU | P0-3 | 完成代码+用例；性能待 T16 |
-| T4 | 复用 A 阶段 `mid` 张量 | CUDA Graph 前置 | P1-3 | 待做：去掉每步 144 次 `torch.empty` |
-| T5 | KV cache 预分配(替代每步 `aten::cat`) | CUDA Graph 前置 | 新增 | 待做：最大障碍，145 次/步 |
-| T6 | CUDA Graph decode 单档 capture | CUDA Graph | P2-1 | 待做，前置 T1/T2/T4/T5 |
-| T7 | CUDA Graph 验收：TPOT 3 次取区间 | CUDA Graph | P2-1 | 待做 |
-| T8 | LoRA stacked + 基座 QKV/gate-up 合并 | launch | P1-4 | 待做，减少 base_gemm 的 433 次 launch |
-| T9 | 相同 adapter 请求合组 | launch | E-2 | 待做 |
-| T10 | 搭换入工况(`POOL_SLOTS` 调小)+ 复测 T3 | 工况 | P2-2 前置 | 待做 |
-| T11 | A kernel n 方向早退 | kernel | P0-2 | 待做，只降 busy |
-| T12 | A/B segment 越界早退 | kernel | P0-4 | 待做，只降 busy |
-| T13 | B store 补 `n_offset < N` mask | kernel | P0-1 | 待做，正确性 |
-| T14 | 实验：BLOCK_M/BLOCK_S 16→4/2/1 | kernel | E-1 | 待做 |
-| T15 | 若 T14 有收益 → decode 专用 GEMV | kernel | E-1 | 待做，依赖 T14 |
-| T16 | autotune + `num_stages` | kernel | P1-1 / P1-2 | 待做，主要救 prefill |
-| T17 | pinned + copy stream + non_blocking + 双缓冲 | 异步 | P2-2 | 待做，与 T6 二选一 |
+| T3 | 换入不再全槽 `zero_()`，只清缺失模块 | CPU | P0-3 | 完成代码+用例；性能待 T9（当前 bench 槽位数=adapter 数，零换入） |
+| T4 | 复用 A 阶段 `mid` 张量 | CUDA Graph 前置 | P1-3 | 完成：`aten::empty` 295→151/步 |
+| T5 | CUDA Graph decode 单档 capture | CUDA Graph | P2-1 | 完成：wall 94.37→28.41（−69.9%），gap 78.2%→1.9%；机制在 `graph_decode.py`，校验在 `tests/test_graph_decode.py` |
+| T6 | CUDA Graph 验收：TPOT 3 次取区间 | CUDA Graph | P2-1 | 完成：graph TPOT 30.21/30.22/30.21（极差 0.01ms），对齐 3/3 OK |
+| T7 | LoRA stacked + 基座 QKV/gate-up 合并 | launch | P1-4 | 待做，减少 base_gemm 的 433 次 launch |
+| T8 | 相同 adapter 请求合组 | launch | E-2 | 待做 |
+| T9 | 搭换入工况(`POOL_SLOTS` 调小)+ 复测 T3 | 工况 | P2-2 前置 | 待做 |
+| T10 | A kernel n 方向早退 | kernel | P0-2 | 待做，**现在 busy≈wall，降 busy 就是降延迟** |
+| T11 | A/B segment 越界早退 | kernel | P0-4 | 待做，同上 |
+| T12 | B store 补 `n_offset < N` mask | kernel | P0-1 | 待做，正确性 |
+| T13 | 实验：BLOCK_M/BLOCK_S 16→4/2/1 | kernel | E-1 | 待做 |
+| T14 | 若 T13 有收益 → decode 专用 GEMV | kernel | E-1 | 待做，依赖 T13 |
+| T15 | autotune + `num_stages` | kernel | P1-1 / P1-2 | 待做，主要救 prefill |
+| T16 | pinned + copy stream + non_blocking + 双缓冲 | 异步 | P2-2 | 待做，与 T5 二选一 |
 
 ---
 
@@ -305,8 +334,13 @@ q/k/v 的 `in_dim` 相同，可以合并 buffer、一次 kernel 算三个投影�
 
 ### P2-1 CUDA Graph
 
-当前没有任何 capture/replay。需要先完成 P0-5（地址稳定）。
-decode 阶段形状固定，收益最大。
+已完成单档：录一步真实 decode（含写 KV、刷 mask、推进位置），实测见 §0.5 的 T5 基线。
+
+- 机制：`multi_lora/graph_decode.py` 的 `DecodeStep` + `capture_graph`；
+- 测速：`run_graph_tier`；正确性：`tests/test_graph_decode.py`；
+- 前提：T1/T2/T4 已让 metadata 与 A 的 `mid` 地址跨 step 不变；
+- 限制：只覆盖 batch=64 一档；换 batch 或换 adapter 组合要重新 capture，
+  KV 用 StaticCache 预分配、长度按总步数算，不能扩。
 
 ### P2-2 adapter 换入的 H2D 未隐藏
 
@@ -364,7 +398,7 @@ B kernel 的 `BLOCK_S=16` 同理。再叠加 P0-2（rank16 时 n 方向 4 块只
 |`torch.compile` | 自定义 triton kernel + KV cache 会变长 → graph break / 反复重编译；同样是为了消 launch 开销，CUDA Graph 更对症 |
 | 手写小算子融合（norm/rope/silu/mul） |`elementwise` 确实有 1460 次/步、1.7μs/次，但 CPU 那部分 CUDA Graph 一次性就能拿到；先做 P2-1,再评估剩下的 2.46ms GPU 值不值得手写 |
 
-> 已移除:“单独写 decode GEMV”不再直接归入本表，改由 **T14** 实验裁决，有收益才走 **T15**。
+> 已移除:“单独写 decode GEMV”不再直接归入本表，改由 **T13** 实验裁决，有收益才走 **T14**。
 
 ---
 
@@ -375,6 +409,9 @@ B kernel 的 `BLOCK_S=16` 同理。再叠加 P0-2（rank16 时 n 方向 4 块只
 ```bash
 .venv/bin/python -m pytest multi_lora/tests -q
 ```
+
+其中 `tests/test_graph_decode.py` 专门校验 CUDA Graph：replay 与直接跑的 logits 逐步比对，
+以及 capture 前后常驻张量地址不变。改 kernel 或改 metadata 后必须跑它。
 
 **kernel 级**：`multi_lora/examples/bench_qwen4b_e2e.py`，分别看 prefill 与 decode，
 不要只报最好 shape。
@@ -400,34 +437,33 @@ B kernel 的 `BLOCK_S=16` 同理。再叠加 P0-2（rank16 时 n 方向 4 块只
 
 分四段推进，编号对应上面的「任务总表」。
 
-**第一段：CUDA Graph（T4–T7）**
+**第一段：CUDA Graph（T4–T6）**
 
-1. **T4**（复用 A 的 `mid`）—— 去掉每步 144 次 `torch.empty`，同时让地址稳定
-2. **T5**（KV cache 预分配）—— 去掉每步 145 次 `aten::cat`，这是最大的前置
-3. **T6**（capture）—— decode 单档，基线 `bench_decode_n64`（busy 20.6 / 墙钟约 90 / launch 2582），
-   目标把墙钟压到 30ms 量级
-4. **T7**（验收）—— TPOT 重复 3 次取区间
+1. **T4**（复用 A 的 `mid`）—— 已完成：`aten::empty` 295→151/步，地址稳定
+2. **T5**（capture）—— decode 单档；窗口是 `use_cache=False` + 固定 `past`，形状和地址本来就稳；
+   基线 `bench_decode_n64`（busy 20.6 / 墙钟约 90 / launch 2582），目标把墙钟压到 30ms 量级
+3. **T6**（验收）—— TPOT 重复 3 次取区间
 
-**第二段：launch 数与工况（T8–T10）**
+**第二段：launch 数与工况（T7–T9）**
 
-5. **T8**（stacked LoRA + 基座 QKV/gate-up 合并）—— decode 的 base_gemm 是 433 次 launch 对应 252 个 linear
-6. **T9**（同 adapter 合组）
-7. **T10**（`POOL_SLOTS` 调小 + adapter 轮换）—— 先搭工况，才能复测 T3
+4. **T7**（stacked LoRA + 基座 QKV/gate-up 合并）—— decode 的 base_gemm 是 433 次 launch 对应 252 个 linear
+5. **T8**（同 adapter 合组）
+6. **T9**（`POOL_SLOTS` 调小 + adapter 轮换）—— 先搭工况，才能复测 T3
 
-**第三段：kernel 内部（T11–T16）**
+**第三段：kernel 内部（T10–T15）**
 
-> 这一段只降 GPU busy，不降 wall（decode 是 launch-bound）；而且改完 kernel 必须重跑 **T6/T7** 重新 capture。
+> 这一段只降 GPU busy，不降 wall（decode 是 launch-bound）；而且改完 kernel 必须重跑 **T5/T6** 重新 capture。
 
-8. **T11**（A kernel n 方向早退）—— rank<64 时省 4 倍空转
-9. **T12**（A/B segment 越界早退）—— 混合 batch 下省无效 program
+7. **T10**（A kernel n 方向早退）—— rank<64 时省 4 倍空转
+8. **T11**（A/B segment 越界早退）—— 混合 batch 下省无效 program
 
-   > T11/T12 都必须在 kernel 内 `return`，不能改 host 侧 grid，否则 T6 的 graph 要随 adapter 变
+   > T10/T11 都必须在 kernel 内 `return`，不能改 host 侧 grid，否则 T5 的 graph 要随 adapter 变
 
-10. **T13**（B store 补 `n_offset < N` mask）—— 当前 out_dim 都是 16 的倍数，暂时不会越界
-11. **T14**（`BLOCK_M/BLOCK_S` 16→4/2/1）—— 不改结构，跑 decode 定要不要走 T15
-12. **T15**（decode 专用 GEMV）—— 仅当 T14 确有收益
-13. **T16**（autotune + `num_stages`）—— 主要救 prefill；做完同样要重跑 T6
+9. **T12**（B store 补 `n_offset < N` mask）—— 当前 out_dim 都是 16 的倍数，暂时不会越界
+10. **T13**（`BLOCK_M/BLOCK_S` 16→4/2/1）—— 不改结构，跑 decode 定要不要走 T14
+11. **T14**（decode 专用 GEMV）—— 仅当 T13 确有收益
+12. **T15**（autotune + `num_stages`）—— 主要救 prefill；做完同样要重跑 T5
 
-**第四段：异步 H2D（T17）**
+**第四段：异步 H2D（T16）**
 
-14. **T17**（pinned + copy stream + 双缓冲）—— 与 T6 二选一：capture 内不能有自由异步拷贝
+13. **T16**（pinned + copy stream + 双缓冲）—— 与 T5 二选一：capture 内不能有自由异步拷贝

@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""单跑一档:batch=64 / batch 内 64 个 adapter / prefill+decode 各一个 profiler 窗口。
+"""单跑一档:batch=64 / batch 内 64 个 adapter,产出三个 profiler 窗口。
 
-测量和打印全部复用 fix_batch_test_each_cost.py 里的 run_one_tier + print_report,
-本脚本只做三件事:指定输出目录、按 STAGES 开窗口、跑完自动串 analyze_trace.py。
+测量和打印全部复用 fix_batch_test_each_cost.py 里的 run_one_tier + run_graph_tier
++ print_report,本脚本只做三件事:指定输出目录、跑窗口、跑完自动串 analyze_trace.py。
+
+三个窗口:
+  prefill_n64   prefill
+  plain_n64     真实 decode(每步写 KV),不录 graph
+  graph_n64     同一份真实 decode,录成 graph 后 replay
+plain 与 graph 只差“有没录 graph”一件事,两者的 GPU 时间应当接近,
+墙钟之差就是 CUDA Graph 的净收益。
 
 产物落在 traces/04_decode_n64/v{n}/,每次跑自动 +1(v1/v2/...),不覆盖上一轮:
-  decode_n64.json.gz          原始 chrome trace
-  decode_n64.txt              top-10 kernel 表
-  decode_n64.bucketed.json.gz 分桶上色的派生 trace(Perfetto 打开这个)
+  <窗口名>.json.gz          原始 chrome trace
+  <窗口名>.txt              top-10 kernel 表
+  <窗口名>.bucketed.json.gz 分桶上色的派生 trace(Perfetto 打开这个)
   bucket_summary.csv / bucket_detail.csv / kernel_group_summary.csv
 02 目录里已有的 trace 和 CSV 一律不动。
 
@@ -28,7 +35,7 @@ sys.path.insert(0, str(_ROOT))
 
 from multi_lora.examples.fix_batch_test_each_cost import (  # noqa: E402
     ADAPTERS, ADAPTER_RANKS, BASE, BATCH_SIZE, PROMPT, SEED,
-    assign_names, print_report, run_one_tier,
+    assign_names, print_report, run_graph_tier, run_one_tier,
 )
 from multi_lora.hf_runner import (  # noqa: E402
     load_causal_lm, load_tokenizer, pick_device, pick_dtype, release_model,
@@ -37,9 +44,9 @@ from multi_lora.manager import MultiLoRAManager  # noqa: E402
 
 OUT_ROOT = _ROOT / "traces" / "04_decode_n64"  # 历次结果都堆在这下面
 NUM_ADAPTERS = 64  # batch 内不同 adapter 的个数(64 行正好一人一个)
-# 两个窗口都开:prefill 那个当“挡枪”,吃掉进程首个 profiler 窗口的初始化开销
+# 先跑 prefill 窗口当“挡枪”,吃掉进程首个 profiler 窗口的初始化开销
 # (实测:只开 decode 时墙钟 158.97ms,补一个 prefill 窗口后 decode 降到 113.64ms)
-STAGES = ("prefill", "decode")
+# decode 阶段的两个窗口(plain / graph)由 run_graph_tier 产出
 
 
 def next_run_dir(root: Path) -> Path:
@@ -78,11 +85,20 @@ def main():
     try:
         row = run_one_tier(
             mgr, enc, assign_names(NUM_ADAPTERS, list(ADAPTERS)),
-            device, run_dir, NUM_ADAPTERS, stages=STAGES)
+            device, run_dir, NUM_ADAPTERS)
+        # 真实 decode 的 CUDA Graph 单独一档:static KV + 常驻 buffer
+        # 同时产出不录 graph 的对照窗口 plain_*
+        graph_rows = run_graph_tier(
+            mgr, enc, assign_names(NUM_ADAPTERS, list(ADAPTERS)),
+            run_dir, NUM_ADAPTERS)
+        row["graph"] = graph_rows["graph"]
+        row["plain"] = graph_rows["plain"]
     finally:
         release_model(mgr.model)
 
     print_report([row])
+    print(f"\nTPOT: 非 graph {row['tpot']:.2f} ms -> graph "
+          f"{row['graph']['tpot']:.2f} ms  (加速 {row['tpot'] / row['graph']['tpot']:.2f}x)")
     # 分桶纯 CPU,放最后跑(显存已释放),不再手敲第二条命令
     return subprocess.call([
         sys.executable,
