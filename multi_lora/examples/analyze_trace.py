@@ -374,7 +374,7 @@ def main() -> int:
         details[stem] = rows
         # 分组表: 从文件名取阶段与档(k64swap32 = 64 个 adapter、每步换 32 个),
         # 认不出来的归 stage=stem。第二元统一用 str,避免排序时 str/int 混比
-        m = re.match(r"(prefill|plain|decode|mix)_k(\d+)swap(\d+)", stem)
+        m = re.match(r"(prefill|plain|gplain|graph|decode|mix)_k(\d+)swap(\d+)", stem)
         key = ((m.group(1), f"k{m.group(2)}swap{m.group(3)}")
                if m else (stem, ""))
         group_rows[key] = s.pop("_groups")

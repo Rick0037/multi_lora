@@ -138,8 +138,8 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 `assign_names`、`SOLO_ADAPTER`、`ADAPTER_COUNTS`、`host_mem`/`gpu_mib` 及其打印、
 `import pdb/os/subprocess/Counter`、`manager.py` 的 `_has_peft_layers` 打印、
 trace 目录里的 `old_naming`/`old_fp32`/`old_25step`/`rows`。
-`analyze_trace.py` 的分组正则已改成认 `k(\d+)swap(\d+)`。
-`run_graph_tier` 目前无人调用，是 §7 graph 对比任务的预留，保留。
+`analyze_trace.py` 的分组正则已改成认 `k(\d+)swap(\d+)`（含 `graph`/`gplain` 阶段）。
+`run_graph_tier` 由 `bench_decode_n64.py` 调用（graph 对比工况，见 §7）。
 
 ---
 
@@ -151,7 +151,7 @@ trace 目录里的 `old_naming`/`old_fp32`/`old_25step`/`rows`。
 | T3 | 换入不再全槽 `zero_()`，只清缺失模块 | ✅ 结项（代码+用例+性能数字齐） |
 | T16 | **合并 H2D（下一步，必做）** | 分母已齐：32.4 ms/步/adapter，其中传输仅 3.7 ms；9216 次/步 → 合并到个位数 |
 | T17 | copy stream + non_blocking + 双缓冲 | 排在 T16 之后 |
-| — | **graph 下的换入换出对比** | `run_graph_tier` 目前每步只 `replay()`，不做 prepare → graph 档仍是"不换入"。加法：每步 graph 外 `_setup_forward_batch(新的一组)` + `replay()`，换入的 H2D 留在 graph 内/外正是这条对比要看的 |
+| — | **graph 下的换入换出对比** | ✅ 机制已实机验证（10-31 晚 `traces/04_decode_n64/v7`）：每步 graph 外 `_setup_forward_batch` + replay 跑通，graph/gplain 窗口的 kernel 序列与 GPU 时间逐位一致；Graph 省 launch ~110 ms/步（CPU 813 vs 913），但 ~730 ms 换入串行原样保留——**graph 吸收不了换入成本**。GPU 侧跨进程复现到毫秒（copy_memset 118.06 vs 118.10）。待做：replay-only 基准已加进 `run_graph_tier`（`tpot_replay_only`，下次跑出数）；"H2D 搬进 graph 内（pinned staging + 录制异步拷贝）"是后续设计点 |
 
 已完成的：T1（去 `.item()`）、T2（常驻 metadata）、T3、T4（复用 `mid`）、
 T5（真实 decode 的 CUDA Graph，wall 94.37 → 28.41）、T6（graph TPOT 30.21/30.22/30.21，极差 0.01 ms）。
