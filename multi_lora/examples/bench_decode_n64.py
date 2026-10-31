@@ -24,6 +24,7 @@ Example::
       python multi_lora/examples/bench_decode_n64.py
 """
 
+import gc
 import subprocess
 import sys
 from pathlib import Path
@@ -35,10 +36,10 @@ sys.path.insert(0, str(_ROOT))
 
 from multi_lora.examples.fix_batch_test_each_cost import (  # noqa: E402
     ADAPTERS, ADAPTER_RANKS, BASE, BATCH_SIZE, PROMPT, SEED,
-    assign_names, print_report, run_graph_tier, run_one_tier,
+    build_rotation, print_report, run_graph_tier, run_one_tier,
 )
 from multi_lora.hf_runner import (  # noqa: E402
-    load_causal_lm, load_tokenizer, pick_device, pick_dtype, release_model,
+    load_causal_lm, load_tokenizer, pick_device, pick_dtype,
 )
 from multi_lora.manager import MultiLoRAManager  # noqa: E402
 
@@ -73,9 +74,13 @@ def main():
         [PROMPT] * BATCH_SIZE, padding=True, return_tensors="pt")
     enc = {k: v.to(device) for k, v in enc.items()}
 
+    # 只注册会用到的 64 个(= rotation.used_names(),即 q00..q63),
+    # 全注册 128 个会让 from_pretrained 途中的 PEFT 常驻白多 2.6 GiB
+    rotation = build_rotation(NUM_ADAPTERS, 0)
+    used = {n: ADAPTERS[n] for n in rotation.used_names()}
     mgr = MultiLoRAManager.from_pretrained(
         load_causal_lm(BASE, device=device, dtype=dtype),
-        ADAPTERS,
+        used,
         # 槽位数 = 本档 adapter 数;rank 上限 = 变体的实际 rank
         max_loras_per_batch=NUM_ADAPTERS,
         max_lora_rank=max(ADAPTER_RANKS.values()),
@@ -84,17 +89,22 @@ def main():
 
     try:
         row = run_one_tier(
-            mgr, enc, assign_names(NUM_ADAPTERS, list(ADAPTERS)),
-            device, run_dir, NUM_ADAPTERS)
+            mgr, enc, rotation, run_dir,
+            f"k{NUM_ADAPTERS}swap0")
         # 真实 decode 的 CUDA Graph 单独一档:static KV + 常驻 buffer
-        # 同时产出不录 graph 的对照窗口 plain_*
+        # 同时产出不录 graph 的对照窗口 plain_*(graph 每 replay 槽位不变,
+        # 所以名字组也固定:循环铺满 64 行,swap=0 的窗口里和上面同一批)
+        graph_names = [list(used)[i % NUM_ADAPTERS]
+                       for i in range(BATCH_SIZE)]
         graph_rows = run_graph_tier(
-            mgr, enc, assign_names(NUM_ADAPTERS, list(ADAPTERS)),
-            run_dir, NUM_ADAPTERS)
+            mgr, enc, graph_names, run_dir, NUM_ADAPTERS)
         row["graph"] = graph_rows["graph"]
         row["plain"] = graph_rows["plain"]
     finally:
-        release_model(mgr.model)
+        # mgr 引用着模型、pool 与 graph,必须连它一起放
+        del mgr
+        gc.collect()
+        torch.cuda.empty_cache()
 
     print_report([row])
     print(f"\nTPOT: 非 graph {row['tpot']:.2f} ms -> graph "

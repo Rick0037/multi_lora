@@ -21,10 +21,13 @@ from safetensors.torch import load_file, save_file
 
 SRC = Path("/root/autodl-tmp/qwen3_4b_r64_lora/v2-20261022-131552/last-checkpoint")
 OUT_ROOT = Path("/root/autodl-tmp/qwen3_4b_qkvo_variants")
-NUM = 64
+NUM = 128
 RANKS = [8, 16, 32, 64]  # 第 i 个变体的 rank = RANKS[i % len(RANKS)]
 EPS = 0.02
 SEED = 0
+# 存 bf16 而不是 fp32:PEFT 会把注册过的 adapter 按文件里的 dtype 原样常驻显存,
+# fp32 的 128 个就是 10.6 GiB,bf16 减半
+DTYPE = torch.bfloat16
 
 
 def factorize(a: torch.Tensor, b: torch.Tensor, q: int):
@@ -70,8 +73,8 @@ def main() -> int:
             a_r, b_r = shrink(*factors[k], r=r)
             b_key = k.replace("lora_A", "lora_B")
             noise = torch.randn(a_r.shape, generator=gen, dtype=torch.float32)
-            new_state[k] = (a_r * (1.0 + EPS * noise)).contiguous()
-            new_state[b_key] = b_r
+            new_state[k] = (a_r * (1.0 + EPS * noise)).to(DTYPE)
+            new_state[b_key] = b_r.to(DTYPE)
 
         out = OUT_ROOT / f"q{i:02d}"
         out.mkdir(parents=True, exist_ok=True)

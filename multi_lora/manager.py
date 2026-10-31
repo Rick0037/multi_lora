@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Set
 
 import torch
 from peft import PeftModel
@@ -85,7 +85,8 @@ class MultiLoRAManager:
         # 常驻 GPU metadata:先是 0 容量的空版,第一次 forward 写的时候按需分配,
         # 之后原地改写(地址不变)
         self._resident_meta = empty_kernel_input_metadata(
-            device=self.pool.device, dtype=self.pool.dtype)
+            device=self.pool.device, dtype=self.pool.dtype
+        )
 
     @classmethod
     def from_pretrained(
@@ -195,8 +196,7 @@ class MultiLoRAManager:
         seq_lens: List[int],
     ) -> None:
         """forward 前:给 backend 设置 metadata,给每个 LinearWithLoRA 注入 buffer."""
-        metadata = self.build_kernel_input_metadata(
-            lora_names, seq_lens=seq_lens)
+        metadata = self.build_kernel_input_metadata(lora_names, seq_lens=seq_lens)
         self._lora_backend.set_kernel_input_metadata(metadata)
 
         #! 所有的

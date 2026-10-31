@@ -348,8 +348,9 @@ def main() -> int:
     target = Path(args.target)
     cand = sorted(list(target.glob("*.json")) + list(target.glob("*.json.gz"))) \
         if target.is_dir() else [target]
-    # 跳过本脚本自己生成的派生文件, 否则会把它们当成原始 trace 再处理一遍
-    files = [p for p in cand if ".bucketed" not in p.name]
+    # 跳过派生文件和 driver 写的 row_*.json(后者不是 trace,没有 traceEvents)
+    files = [p for p in cand if ".bucketed" not in p.name
+             and not p.name.startswith("row_")]
     skipped = [p.name for p in cand if ".bucketed" in p.name]
     if skipped:
         print(f"skip {len(skipped)} derived trace(s): {skipped[:3]}")
@@ -371,9 +372,11 @@ def main() -> int:
                 s.pop("_op_detail").items(), key=lambda x: -x[1][0])[:12]:
             rows.append([b, "aten_op", name, us, cnt / s["steps"]])
         details[stem] = rows
-        # 分组表: 从文件名取阶段与 adapter 档数, 认不出来的归 stage="other"
-        m = re.match(r"(prefill|decode|m|mix)_n(\d+)", stem)
-        key = ((m.group(1), int(m.group(2))) if m else (stem, 0))
+        # 分组表: 从文件名取阶段与档(k64swap32 = 64 个 adapter、每步换 32 个),
+        # 认不出来的归 stage=stem。第二元统一用 str,避免排序时 str/int 混比
+        m = re.match(r"(prefill|plain|decode|mix)_k(\d+)swap(\d+)", stem)
+        key = ((m.group(1), f"k{m.group(2)}swap{m.group(3)}")
+               if m else (stem, ""))
         group_rows[key] = s.pop("_groups")
         if not args.no_derived:
             dump_trace(derived, p.parent / f"{stem}.bucketed.json.gz")

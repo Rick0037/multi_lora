@@ -111,7 +111,8 @@
 | T13 | 实验：BLOCK_M/BLOCK_S 16→4/2/1 | kernel | E-1 | 待做 |
 | T14 | 若 T13 有收益 → decode 专用 GEMV | kernel | E-1 | 待做，依赖 T13 |
 | T15 | autotune + `num_stages` | kernel | P1-1 / P1-2 | 待做，主要救 prefill |
-| T16 | pinned + copy stream + non_blocking + 双缓冲 | 异步 | P2-2 | 待做，与 T5 二选一 |
+| T16 | **合并 H2D（必做，排在所有优化的最后）**：每步换入的 N 个 adapter 先在 CPU 侧拼成一块连续 pinned 缓冲，1~2 次拷贝传完，再用一次 `index_copy_` 散到各槽位 | 异步 | P2-2 | **必做**：每步 9216 次 H2D 既是换入成本的大头，也是 profiler 主机内存爆掉的原因 |
+| T17 | copy stream + `non_blocking=True` + 双缓冲预取 | 异步 | P2-2 | 待做，与 T5 二选一 |
 
 ---
 
@@ -350,12 +351,23 @@ pageable 内存 + 默认流同步 `copy_`，且在 forward 之前串行执行。
 可改 pinned 内存 + 独立 copy stream +`non_blocking=True` + event 等待，
 并按下一 batch 的 adapter 集合预取（需要双缓冲，避免覆盖 in-flight kernel 正在读的权重）。
 
+**但第一步必须是“合并 H2D”（T16）**
+
+现在每换入 1 个 adapter = 144 模块 × A/B = **288 次独立 `copy_`**；`k64swap32` 每步
+32×288 ≈ 9216 次。这既是换入成本的主体，也让 profiler 每步产生约 2.5 万条事件，
+50 步后 kineto 在内存里攒到几十 GB（实测把主机内存打爆）。
+
+做法：每步把要换入的 N 个 adapter 权重先在 CPU 侧拼成**一块连续 pinned 缓冲**，
+一次 `copy_` 传到 GPU 的 staging 区，再用**一次 `index_copy_`** 散到各槽位。
+每步拷贝次数从 9216 降到个位数，事件数与 CPU 开销同时消失。
+
 **⚠ 本条保留，不要降级。** 现在测不到收益只是**工况没搭好**：`POOL_SLOTS`=64 个 adapter
 全部常驻，稳态每步没有任何权重 H2D（分桶里那 0.034ms 全是元数据小拷贝）。
 真实场景显存不够、adapter 数远超槽位数时，这条是必经路径。
 
-**要验证先把工况造出来**：把 `POOL_SLOTS` 调小（如 16）+ 用 adapter 轮换的请求序列，
-让每步都有换入换出，否则任何异步改动都无法量化。
+**验证工况已搭好**：`fix_batch_test_each_cost.py` 的 `TIERS` 五档
+（`k1swap1 / k8swap4 / k32swap16 / k64swap32 / k64swap0`），槽位数 = 本档 adapter 数，
+每步按 rank 分组轮转换入 H 个，平均 rank 与不换入时完全一致（`TierRotation`）。
 
 ---
 
@@ -464,6 +476,7 @@ B kernel 的 `BLOCK_S=16` 同理。再叠加 P0-2（rank16 时 n 方向 4 块只
 11. **T14**（decode 专用 GEMV）—— 仅当 T13 确有收益
 12. **T15**（autotune + `num_stages`）—— 主要救 prefill；做完同样要重跑 T5
 
-**第四段：异步 H2D（T16）**
+**第四段：异步 H2D（T16、T17）**
 
-13. **T16**（pinned + copy stream + 双缓冲）—— 与 T5 二选一：capture 内不能有自由异步拷贝
+13. **T16**（合并 H2D：一块连续 pinned 缓冲 + 一次 `index_copy_` 散到槽位）—— **必做**，排在所有优化的最后
+14. **T17**（copy stream + non_blocking + 双缓冲预取）—— 与 T5 二选一：capture 内不能有自由异步拷贝
