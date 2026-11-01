@@ -115,6 +115,7 @@ def classify(name: str, cat: str, op: Optional[str]) -> str:
 GROUP_RULES = [
     ("lora_a", re.compile(r"_sgemm_lora_a_kernel")),
     ("lora_b", re.compile(r"_sgemm_lora_b_kernel")),
+    ("lora_scatter", re.compile(r"_scatter_stage_kernel")),
     ("attention", re.compile(r"flash|fmha|attention", re.I)),
     ("cat_kv", re.compile(r"CatArrayBatchedCopy|concat", re.I)),
     ("base_gemm", re.compile(r"gemm|cutlass|cublas|nvjet|gemv", re.I)),

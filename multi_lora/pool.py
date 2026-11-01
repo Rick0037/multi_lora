@@ -5,6 +5,7 @@ PEFT 权重 --抽取--> CPU AdapterWeights --装载--> 本模块的 GPU 槽位
 
 from __future__ import annotations
 
+import os
 from typing import Dict, List, Optional, Set, Tuple
 
 import torch
@@ -53,6 +54,44 @@ class _RankPlan:
             self.b_shape[key] = (out_dim, rank)
             off += out_dim * rank
         self.total = off
+        #! T19:GPU 上的散布描述表(懒建,见 build_tables), 如何使用GPU去进行切片于解包
+        self.tables = None
+
+    def build_tables(self, buffers, device) -> dict:
+        """把 144 个 key 的池地址/步长/段偏移打包成 GPU 张量,给散布 kernel 用。
+
+        池张量按 key 各自独立分配,无法当 kernel 参数逐个传;这里取第一个
+        A 当 base,其余位置表示成相对它的元素偏移(int64,可为负)。
+        A/B 建好后地址不再变,_plan_for 在 key 集合变化时整体作废重建。
+        """
+        keys = self.keys
+        a, b = buffers.A, buffers.B
+        base = a[keys[0]]
+        el = base.element_size()
+
+        def i32(xs):
+            return torch.tensor(xs, dtype=torch.int32, device=device)
+
+        def i64(xs):
+            return torch.tensor(xs, dtype=torch.int64, device=device)
+
+        a_numel = [self.rank * self.a_shape[k][1] for k in keys]
+        b_numel = [self.b_shape[k][0] * self.rank for k in keys]
+        self.tables = {
+            "base": base,
+            "a_delta": i64([(a[k].data_ptr() - base.data_ptr()) // el for k in keys]),
+            "a_off": i32([self.a_off[k] for k in keys]),
+            "a_numel": i32(a_numel),
+            "a_sstride": i32([a[k].stride(0) for k in keys]),
+            "b_delta": i64([(b[k].data_ptr() - base.data_ptr()) // el for k in keys]),
+            "b_off": i32([self.b_off[k] for k in keys]),
+            "b_numel": i32(b_numel),
+            "b_sstride": i32([b[k].stride(0) for k in keys]),
+            "b_rstride": i32([b[k].stride(1) for k in keys]),
+            "n": len(keys),
+            "max_numel": max(max(a_numel), max(b_numel)),
+        }
+        return self.tables
 
 
 class _GpuBuffers:
@@ -79,6 +118,8 @@ class _GpuBuffers:
         self.dtype = dtype
         self.A: Dict[str, torch.Tensor] = {}
         self.B: Dict[str, torch.Tensor] = {}
+        # T19 散布实现:kernel(默认)/python;LORA_SCATTER_IMPL=python 切回参考实现
+        self.scatter_impl = os.environ.get("LORA_SCATTER_IMPL", "kernel")
         # T17 异步装载:专用 copy stream + 完成事件(仅 cuda;CPU 测试走同步)
         self._copy_stream = None
         self._load_event = None
@@ -150,6 +191,11 @@ class _GpuBuffers:
         第2轮: (17, 乙)  乙.rank=8  → by_rank[8] 追加 (17, 乙)
         第3轮: (3, 丙)   丙.rank=16 → by_rank[16] 追加 (3, 丙)
         """
+        # T19:GPU 且配置为 kernel 时走单 kernel 散布;否则 python 高级索引(参考实现)
+        use_kernel = self.device.type == "cuda" and self.scatter_impl == "kernel"
+        if use_kernel:
+            from multi_lora.kernels.scatter_bank import scatter_stage
+
         for rank, group in by_rank.items():  # 32个按rank分4桶(8/16/32/64各8个)
             plan = self._plan_for(rank)  # 该rank的偏移表
             stage = self._ensure_stage(plan.total)  # GPU暂存,形如如下, 装不下了继续
@@ -164,6 +210,8 @@ class _GpuBuffers:
                 # 暂存跨 rank 复用、可能在默认流分配却在本流使用,登记一下
                 # 免得重分配后被分配器提前复用
                 stage.record_stream(torch.cuda.current_stream())
+            # T19:144 个 key 的池地址/步长/段偏移,一次打包给 kernel
+            tables = plan.tables or plan.build_tables(self, self.device)
             # * 分组循环, 每次处理_BANK_CHUNK个
             for start in range(0, len(group), _BANK_CHUNK):
                 # * range(0, 8, 4)` 就是`[0, 4]` ——从 0 开始，每次加 4。所以这个循环跑两轮。
@@ -176,6 +224,11 @@ class _GpuBuffers:
                 slots = torch.tensor([s for s, _ in chunk], device=self.device)
                 #! 某一个chunk 4个adapter对应的 `slots = [5, 17, 3, 40]`
                 # *------------权重分发----------------
+                # T19:一个 kernel 做完本 chunk 全部 144 key 的 A+B 散布
+                # (v11 是 144×2 条 index_put_,1152 轮 Python 循环 ≈23ms CPU)
+                if use_kernel:
+                    scatter_stage(stage, slots, tables, plan.total, h, rank)
+                    continue
                 for key in plan.keys:  # 144 个 module 挨个来, 先看 key="q_proj"
                     a_off = plan.a_off[key]  #! 在play中寻找 自己矩阵a 对应的offset
                     a_numel = plan.rank * plan.a_shape[key][1]  # * 实际需要的数组

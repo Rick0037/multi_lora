@@ -91,6 +91,38 @@ def check_bank(pool, weights):
         assert torch.equal(seg_b, b), f"bank {key} B 排列错误"
 
 
+def check_tables(pool):
+    """T19 散布 kernel 的偏移表与 python 路径用的量一致。
+
+    表里任何一个 stride/offset 错了,kernel 都会把权重写到错误位置,
+    CPU 上先把表本身对死,GPU 只需验证搬运。
+    """
+    for rank, plan in pool.buffers._plans.items():
+        t = plan.tables
+        if t is None:
+            continue
+        keys = plan.keys
+        a, b = pool.buffers.A, pool.buffers.B
+        base = a[keys[0]]
+        el = base.element_size()
+        assert t["n"] == len(keys)
+        for j, k in enumerate(keys):
+            assert t["a_delta"][j].item() == (a[k].data_ptr() - base.data_ptr()) // el
+            assert t["b_delta"][j].item() == (b[k].data_ptr() - base.data_ptr()) // el
+            assert t["a_off"][j].item() == plan.a_off[k]
+            assert t["a_numel"][j].item() == rank * plan.a_shape[k][1]
+            assert t["a_sstride"][j].item() == a[k].stride(0)
+            assert t["b_off"][j].item() == plan.b_off[k]
+            assert t["b_numel"][j].item() == plan.b_shape[k][0] * rank
+            assert t["b_sstride"][j].item() == b[k].stride(0)
+            assert t["b_rstride"][j].item() == b[k].stride(1)
+        max_numel = max(
+            max(rank * plan.a_shape[k][1] for k in keys),
+            max(plan.b_shape[k][0] * rank for k in keys),
+        )
+        assert t["max_numel"] == max_numel
+
+
 def main():
     torch.manual_seed(0)
     pool = LoRAMemoryPool(
@@ -130,6 +162,7 @@ def main():
     for w in store.values():
         if w.rank in pool.buffers._plans:
             check_bank(pool, w)
+    check_tables(pool)
     # build_batch_info 的槽位映射与实际驻留一致
     info = pool.build_batch_info(["a", "d"])
     assert info.weight_indices[0] == pool.get_slot_id("a")

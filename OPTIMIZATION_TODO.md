@@ -114,41 +114,39 @@
 | T16 | **合并 H2D（必做，排在所有优化的最后）**：每步换入的 N 个 adapter 先在 CPU 侧拼成一块连续 pinned 缓冲，1~2 次拷贝传完，再用一次 `index_copy_` 散到各槽位 | 异步 | P2-2 | 完成（v8）：补零装箱把字节翻倍，被 T17 取代 |
 | T17 | copy stream + `non_blocking=True` + 双缓冲预取 | 异步 | P2-2 | 完成（v9/v10）：pinned + copy stream；v10 按 (module,rank) 聚合，TPOT 732→428 |
 | T18 | **整块 pinned bank**：每个 adapter 首装时按固定布局拼成一条连续 pinned 缓冲，换入 = 32 次整块 H2D + GPU 内散布 | 异步 | P2-2 | 完成（v11）：TPOT 428→169.8，CPU 433→57.2ms |
-| T19 | **散布融合单 kernel**：把每步 1152 次 `index_put_` 合成 1 次（指针表 + 偏移表进显存） | 异步 | P2-2 | 待做，预估 −20ms（170→150） |
+| T19 | **散布融合单 kernel**：把每步 1152 次 `index_put_` 合成 1 次（指针表 + 偏移表进显存） | 异步 | P2-2 | 完成（v12）：TPOT 169.8→142.7，CPU 57→5.3ms，gap 80.9→3.7ms(2.6%)；`LORA_SCATTER_IMPL=python` 可切回参考实现 |
 | T20 | 预取重叠：next-step 权重在 current-step 计算期间搬运 | 异步 | P2-2 | 暂缓，需 +1.4GB 显存，当前 GPU 已贴边 |
 
 ---
 
 ## 换入优化版本账（k64swap32，graph 窗口，口径见 `traces/04_decode_n64/`）
 
-| 版本 | 手段 | TPOT | CPU | h2d GPU | gap | 单步字节 |
+| 版本 | 手段 | TPOT | CPU | gap | launch/f | tok/s |
 |---|---|---|---|---|---|---|
-| v6 | 逐条 pageable `copy_` | 861 | ~350 | 118 | ~480 | 1.4GB |
-| v8 | T16 装箱补零合并 | ~713(wall) | — | 275 | — | 2.8GB(补到 max_rank) |
-| v9 | T17 pinned 逐条 + 异步 | 732 | 580 | 153 | — | 1.4GB |
-| v10 | T17b 按 (module,rank) 聚合 + pinned 暂存 | 428 | 433 | 113 | 389 | 1.4GB |
-| **v11** | **T18 整块 pinned bank + GPU 内散布** | **169.8** | **57.2** | **108.9** | **80.9** | 1.4GB |
+| v6 | 逐条 pageable `copy_` | 861 | ~350 | ~480 | — | — |
+| v8 | T16 装箱补零合并 | ~713(wall) | — | — | — | — |
+| v9 | T17 pinned 逐条 + 异步 | 732 | 580 | — | — | — |
+| v10 | T17b 按 (module,rank) 聚合 + pinned 暂存 | 428 | 433 | 389 | 5324 | 120.0 |
+| v11 | T18 整块 pinned bank + GPU 内散布 | 169.8 | 57.2 | 80.9(35.9%) | 5360 | 283.7 |
+| **v12** | **T19 散布融合单 kernel** | **142.7** | **5.3** | **3.7(2.6%)** | **3064** | **448.9** |
 
-v11 关键数字（`ladder_table.py traces/04_decode_n64/v11`）：
+v12 关键数字（`ladder_table.py traces/04_decode_n64/v12`）：
 
-- `graph` wall 225.55 / GPU busy 144.69 / gap 80.88（35.9%）/ launch 5360 / tok/s 283.7
-- `replay-only` 26.37ms —— 纯计算只占 wall 的 12%，装载路径仍是主体
-- `copy_memset` 108.87ms / 117 次：32 次整块 H2D 传 1.4GB = **12.9GB/s**
+- graph wall 142.58 / busy 138.94 / **gap 3.66（2.6%）** / launch 3064 / tok/s 448.9（vs gplain +152.7%）
+- `replay-only` 26.42ms；`copy_memset` 108.89ms / 117 次（32 次整块 H2D，12.9GB/s）
+- `lora_scatter` 3.39ms / **8 次**/步（原 2304 个 index_put_）；elementwise 4267→1963 次
+- v6→v12：TPOT **861→142.7（-83%，6.0 倍）**
 
-**PCIe 已经是硬顶**：`RTX 4090 D`，`pcie.link.gen.current=4`、`width.current=8`
-→ 理论 15.75GB/s，实测 12.9（82%）。继续换 H2D 写法不会更快，只能减字节或藏起来。
+**PCIe 硬顶**：`RTX 4090 D`，`pcie.link.gen.current=4`、`width.current=8`
+→ 理论 15.75GB/s，实测 12.9（82%）。判据：v10→v11 H2D 次数 1152→32 而时间不动（112.7→108.9ms），
+时间只跟字节走——带宽受限，写法已不亏钱。
 
-**T19 的成本已经实测过**（`/tmp/probe_scatter2.py`，小形状只量固定开销）：
+**T19 成本实测**（`/tmp/probe_scatter2.py`）：高级索引 A+B 两条 19.96µs/次，
+144 keys × 8 chunk = 1152 次 ≈ 23ms CPU，对上 v11 elementwise 的 1152 次增量。
 
-| 表达 | 每次开销 |
-|---|---|
-| `A[slots,:R]=..` + `B[slots,:,:R]=..`（现在） | 19.96 µs |
-| 逐槽位 8 条语句 | 72.74 µs |
-
-144 keys × 8 chunk = 1152 次 × 20µs ≈ **23ms CPU**，正好对上 v11 里 elementwise
-从 3115 增到 4267 的 1152 次增量（GPU 侧只多 4.1ms）。融合后 1152→1，launch/f 5360→约 4208。
-
-**理论下限**：H2D 109 + 计算 26 + 少量开销 ≈ **145ms**，即这一档最多还剩 ~15% 空间。
+**已到物理地板**：一步 busy = H2D 109（PCIe 硬顶）+ replay 26.4 + scatter 3.4 = 138.9ms，
+wall 142.6 只比 busy 多 3.7ms。继续只剩两条路：T20 预取重叠（上限再省 ~26ms，
+需 +1.4GB 显存，GPU 已贴边）或减字节（换 workload）。
 
 ---
 
