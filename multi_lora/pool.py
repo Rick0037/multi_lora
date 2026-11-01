@@ -62,24 +62,58 @@ class _GpuBuffers:
                 dtype=self.dtype,
             )
 
-    def write(self, slot: int, weights: AdapterWeights) -> None:
-        """把该 adapter 的权重写进槽位,只写前 rank 行,余下的格靠 kernel 的 rank mask 截断.
+    def write_many(self, pairs) -> None:
+        """一批 adapter 一次性装槽(T16 合并 H2D)。
 
-        这个 adapter 没有的模块必须清掉,否则会残留上一个 adapter 的权重(比如 qkvo 换成
-        qkvo+mlp、再换回 qkvo 时,mlp 那几个格还留着前一个 adapter 的值)。
+        原路径每 adapter*module 发 2 (A+B) 次 pageable H2D(k64swap32 每步 9216 次),
+        每次的发起仪式(~35µs CPU)远超搬运本身(12.8µs GPU)。这里按 module
+        聚合:CPU 侧拼成 [h, max_lora_rank, dim](rank 不足补零,与池的
+        rank-mask 语义一致),每个 module 只发 1 次 H2D → 每步 288 次。
+        pairs = [(槽位号, AdapterWeights), ...],顺序任意。
         """
-        for key in self.A:
-            if key in weights.modules:
-                continue
-            self.A[key][slot].zero_()
-            self.B[key][slot].zero_()
-
-        for key in weights.modules:
-            a_cpu, b_cpu = weights.modules[key]
-            #! 每个人只写自己slot位置的
-            self.A[key][slot, : weights.rank].copy_(a_cpu.to(dtype=self.dtype))
-            self.B[key][slot, :, : weights.rank].copy_(
-                b_cpu.to(dtype=self.dtype))
+        """
+        pairs = [
+        (5,  AdapterWeights(rank=8,  modules={"m1": (A[8,in], B[out,8]), ...})),   # 第1个换入的
+        (17, AdapterWeights(rank=16, modules={...})),                              # 第2个
+        (3,  AdapterWeights(rank=32, modules={...})),
+        # k64swap32 时长度 = 32(本步要装的 adapter 数)
+        ]       
+        """
+        if not pairs:
+            return
+        slots = torch.tensor([p[0] for p in pairs], device=self.device)
+        # [5, 17, 3]
+        for weight_key in self.A:
+            # * weight_key 模型权重的key
+            in_dim = self.A[weight_key].shape[2]
+            out_dim = self.B[weight_key].shape[1]
+            # * 本轮要换入的 [change_size, r, in]
+            #! 把同于一个key的换入, 同一个批次的集中到一起, 通过一个packed, 直接copy进去, 在内部分发下去
+            packed_a = torch.zeros(
+                len(pairs), self.max_lora_rank, in_dim, dtype=self.dtype
+            )
+            # * [change_size, out, r]
+            packed_b = torch.zeros(
+                len(pairs), out_dim, self.max_lora_rank, dtype=self.dtype
+            )
+            for i, (_, weights) in enumerate(pairs):
+                # * 想要换入的所有的weight
+                # * 如果这一层模型权重, 没有在想要换入的weight中就continue
+                if weight_key not in weights.modules:
+                    continue
+                # ! 获取某一个想要换入的a, b
+                a_cpu, b_cpu = weights.modules[weight_key]
+                r = weights.rank
+                packed_a[i, :r] = a_cpu  # dtype 不一致时在此隐式转换
+                packed_b[i, :, :r] = b_cpu
+            # 每个 module 一次大块 H2D + 一次按槽位散布
+            self.A[weight_key][slots] = packed_a.to(self.device, non_blocking=False)
+            self.B[weight_key][slots] = packed_b.to(self.device, non_blocking=False)
+            #   A["q_proj"][slots] = packed_a
+            #   等价于:
+            #   A["q_proj"][5]  = 层0    ← 第0个adapter进槽5
+            #   A["q_proj"][17] = 层1    ← 第1个进槽17
+            #   A["q_proj"][3]  = 层2    ← 第2个进槽3
 
     def get(self, module_key: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """取出某个 module 的全部槽位权重."""
@@ -151,15 +185,34 @@ class LoRAMemoryPool:
         *,
         weight_store: Dict[LoraName, AdapterWeights],
     ) -> None:
-        """保证 lora_names 都在 GPU 上:缺的逐个装槽,槽满就换出别的 adapter."""
+        """保证 lora_names 都在 GPU 上:缺的逐个分配槽位,槽满就换出别的 adapter.
+
+        装槽动作按批聚合(T16):先收集本步全部 (slot, weights),最后一次
+        write_many —— H2D 次数与 batch 内 adapter 数解耦,恒为 2*module 数。
+        """
         for name in lora_names:
             self.eviction_policy.mark_used(name)
 
+        pairs = []
         for name in lora_names:
             if name in self.name_to_slot:
                 continue
             slot = self._alloc_slot(lora_names)
-            self._load_name_to_slot(name, slot, weight_store)
+            self.name_to_slot[name] = slot
+            self.slot_names[slot] = name
+            if name is None:
+                # 基座只登记 rank=0,不占权重
+                self._slot_rank_scaling[slot] = (0, 0.0)
+                continue
+            weights = weight_store[name]
+            if weights.rank > self.max_lora_rank:
+                raise ValueError(
+                    f"adapter {name!r} rank {weights.rank} > max_lora_rank {self.max_lora_rank}"
+                )
+            self.buffers.ensure(weights)
+            self._slot_rank_scaling[slot] = (weights.rank, weights.scaling)
+            pairs.append((slot, weights))
+        self.buffers.write_many(pairs)
 
     def build_batch_info(self, lora_names: List[LoraName]) -> BatchLoRAInfo:
         """按行给出槽位号,按槽位给出 rank / scaling(kernel 用槽位号去查表)."""
@@ -213,28 +266,3 @@ class LoRAMemoryPool:
         self.slot_names.pop(slot)
         self._slot_rank_scaling.pop(slot, None)
         return slot
-
-    def _load_name_to_slot(
-        self,
-        name: LoraName,
-        slot: int,
-        weight_store: Dict[LoraName, AdapterWeights],
-    ) -> None:
-        """把 CPU 权重拷进指定槽位;基座(None)只登记 rank=0,不写权重."""
-        self.name_to_slot[name] = slot
-        self.slot_names[slot] = name
-
-        if name is None:
-            self._slot_rank_scaling[slot] = (0, 0.0)
-            return
-
-        weights = weight_store[name]
-        if weights.rank > self.max_lora_rank:
-            raise ValueError(
-                f"adapter {name!r} rank {weights.rank} > max_lora_rank {self.max_lora_rank}"
-            )
-
-        # 池被单独使用(没经过 manager 注册)时,在这里补建
-        self.buffers.ensure(weights)
-        self.buffers.write(slot, weights)
-        self._slot_rank_scaling[slot] = (weights.rank, weights.scaling)
