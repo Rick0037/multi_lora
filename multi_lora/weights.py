@@ -48,6 +48,11 @@ def extract_adapter_weights(model: PeftModel, adapter_name: str) -> AdapterWeigh
         # PEFT 里 A 是 [rank, in],B 是 [out, rank]
         a = module.lora_A[adapter_name].weight.detach().cpu().clone()
         b = module.lora_B[adapter_name].weight.detach().cpu().clone()
+        if torch.cuda.is_available():
+            # T17:换入路径按槽位切片异步 H2D,pinned 源才能 non_blocking
+            # (pageable 源的拷贝是同步的,是换入成本的原始瓶颈)
+            a = a.pin_memory()
+            b = b.pin_memory()
         module_rank = int(module.r[adapter_name])
 
         if rank is None:

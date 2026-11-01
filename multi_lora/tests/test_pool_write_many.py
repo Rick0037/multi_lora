@@ -30,7 +30,9 @@ def make_weights(rank, keys, seed):
 
 
 def check_slot(pool, slot, weights):
-    """槽位内容 == 权重本体(前 rank 行/列),其余为 0."""
+    """槽位前 rank 行/列 == 权重本体。rank 之后的旧行不校验:
+    分组装载不清尾(kernel 按 rank 截断,读不到);缺 module 的 adapter
+    在前 rank 区是零(聚合时填的零源)。"""
     for key, (out_dim, in_dim) in MODULES.items():
         a, b = pool.get_slot_weights(slot, key)
         if key in weights.modules:
@@ -38,25 +40,30 @@ def check_slot(pool, slot, weights):
             r = weights.rank
             assert torch.equal(a[:r], wa), f"slot{slot} {key} A 前缀不一致"
             assert torch.equal(b[:, :r], wb), f"slot{slot} {key} B 前缀不一致"
-            assert a[r:].abs().sum() == 0, f"slot{slot} {key} A 补零区被污染"
-            assert b[:, r:].abs().sum() == 0, f"slot{slot} {key} B 补零区被污染"
         else:
-            # 该 adapter 没有此 module:整个槽必须清零(防残留)
-            assert a.abs().sum() == 0, f"slot{slot} {key} 缺 module 未清零(A)"
-            assert b.abs().sum() == 0, f"slot{slot} {key} 缺 module 未清零(B)"
+            # 该 adapter 没有此 module:kernel 会读的前 rank 区必须是零
+            r = weights.rank
+            assert (
+                a[:r].abs().sum() == 0
+            ), f"slot{slot} {key} 缺 module 前 rank 区非零(A)"
+            assert (
+                b[:, :r].abs().sum() == 0
+            ), f"slot{slot} {key} 缺 module 前 rank 区非零(B)"
 
 
 def main():
     torch.manual_seed(0)
     pool = LoRAMemoryPool(
-        max_loras_per_batch=2, max_lora_rank=8, device=torch.device("cpu"),
+        max_loras_per_batch=2,
+        max_lora_rank=8,
+        device=torch.device("cpu"),
         dtype=torch.float32,
     )
     store = {
         "a": make_weights(8, ["m1", "m2"], seed=1),  # 满 rank、全 module
-        "b": make_weights(4, ["m1"], seed=2),        # 低 rank、缺 m2
+        "b": make_weights(4, ["m1"], seed=2),  # 低 rank、缺 m2
         "c": make_weights(8, ["m1", "m2"], seed=3),
-        "d": make_weights(2, ["m2"], seed=4),        # 缺 m1
+        "d": make_weights(2, ["m2"], seed=4),  # 缺 m1
     }
     for w in store.values():
         pool.ensure_buffers(w)

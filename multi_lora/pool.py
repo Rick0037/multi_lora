@@ -39,6 +39,12 @@ class _GpuBuffers:
         self.dtype = dtype
         self.A: Dict[str, torch.Tensor] = {}
         self.B: Dict[str, torch.Tensor] = {}
+        # T17 异步装载:专用 copy stream + 完成事件(仅 cuda;CPU 测试走同步)
+        self._copy_stream = None
+        self._load_event = None
+        # T17b 分组暂存:(key, rank) -> (pinned_a, pinned_b, 容量);缺 module 的零源缓存
+        self._stage: Dict[tuple, tuple] = {}
+        self._zeros: Dict[tuple, tuple] = {}
 
     def ensure(self, weights: AdapterWeights) -> None:
         """第一次见到某个 module 时,按它的形状建 buffer;已存在的跳过."""
@@ -63,57 +69,96 @@ class _GpuBuffers:
             )
 
     def write_many(self, pairs) -> None:
-        """一批 adapter 一次性装槽(T16 合并 H2D)。
+        """把一批 adapter 装进各自槽位(T17b:按 (module,rank) 分组 + pinned 暂存)。
 
-        原路径每 adapter*module 发 2 (A+B) 次 pageable H2D(k64swap32 每步 9216 次),
-        每次的发起仪式(~35µs CPU)远超搬运本身(12.8µs GPU)。这里按 module
-        聚合:CPU 侧拼成 [h, max_lora_rank, dim](rank 不足补零,与池的
-        rank-mask 语义一致),每个 module 只发 1 次 H2D → 每步 288 次。
-        pairs = [(槽位号, AdapterWeights), ...],顺序任意。
-        """
-        """
-        pairs = [
-        (5,  AdapterWeights(rank=8,  modules={"m1": (A[8,in], B[out,8]), ...})),   # 第1个换入的
-        (17, AdapterWeights(rank=16, modules={...})),                              # 第2个
-        (3,  AdapterWeights(rank=32, modules={...})),
-        # k64swap32 时长度 = 32(本步要装的 adapter 数)
-        ]       
+        三个版本的教训:
+          v6 逐条 pageable:9216 次同步仪式 ≈ 350ms CPU
+          v8 装箱补零:次数少了但字节翻倍(h2d GPU 118→275ms)
+          v9 pinned 逐条:字节紧凑、GPU 只忙 153ms,但 9216 次 Python 级
+             copy_ 的调度(~70µs/次)≈ 580ms CPU,成了新瓶颈(TPOT 732ms)
+        本版把表达方式改成每 (module, rank) 一组 6 条语句:
+          cat 聚合进 pinned 暂存(紧凑,不补零) → 1 次异步 H2D → 1 次散布
+        torch 调用 ~3.5k,聚合的 CPU memcpy(~1.4GB)与 GPU 搬运流水。
+        pairs = [(槽位号, AdapterWeights), ...],k64swap32 时长度 32。
         """
         if not pairs:
             return
-        slots = torch.tensor([p[0] for p in pairs], device=self.device)
-        # [5, 17, 3]
-        for weight_key in self.A:
-            # * weight_key 模型权重的key
-            in_dim = self.A[weight_key].shape[2]
-            out_dim = self.B[weight_key].shape[1]
-            # * 本轮要换入的 [change_size, r, in]
-            #! 把同于一个key的换入, 同一个批次的集中到一起, 通过一个packed, 直接copy进去, 在内部分发下去
-            packed_a = torch.zeros(
-                len(pairs), self.max_lora_rank, in_dim, dtype=self.dtype
+        if self.device.type == "cuda":
+            if self._copy_stream is None:
+                self._copy_stream = torch.cuda.Stream()
+                self._load_event = torch.cuda.Event()
+            with torch.cuda.stream(self._copy_stream):
+                self._load_grouped(pairs, non_blocking=True)
+            self._load_event.record(self._copy_stream)
+        else:
+            self._load_grouped(pairs, non_blocking=False)
+
+    def _load_grouped(self, pairs, non_blocking: bool) -> None:
+        """按 rank 分组:同组内各 adapter 的 (key, A/B) 形状一致,才能 cat 成块."""
+        by_rank: Dict[int, list] = {}
+        for slot, w in pairs:
+            by_rank.setdefault(w.rank, []).append((slot, w))
+        for rank, group in by_rank.items():
+            h = len(group)
+            slots = torch.tensor([s for s, _ in group], device=self.device)
+            for key in self.A:
+                in_dim = self.A[key].shape[2]
+                out_dim = self.B[key].shape[1]
+                pa, pb = self._ensure_stage(
+                    key, rank, h, in_dim, out_dim, pinned=non_blocking
+                )
+                a_list, b_list = [], []
+                for _, w in group:
+                    if key in w.modules:
+                        a_src, b_src = w.modules[key]
+                    else:
+                        # 该 adapter 没此 module:聚合时填零(kernel 只读前 rank 行)
+                        a_src, b_src = self._zero_src(key, rank, in_dim, out_dim)
+                    a_list.append(
+                        a_src if a_src.dtype == self.dtype else a_src.to(self.dtype)
+                    )
+                    b_list.append(
+                        b_src if b_src.dtype == self.dtype else b_src.to(self.dtype)
+                    )
+                # stack 把 h 个 [rank, in] 叠成 [h, rank, in](cat 是沿已有
+                # 维度粘接,会给成 [h*rank, in],形状对不上 out 会触发 resize)
+                torch.stack(a_list, 0, out=pa[:h])
+                torch.stack(b_list, 0, out=pb[:h])
+                ga = pa[:h].to(self.device, non_blocking=non_blocking)
+                gb = pb[:h].to(self.device, non_blocking=non_blocking)
+                # 槽位行宽是 max_lora_rank,只散前 rank 行/列;尾部的旧行
+                # kernel 按 rank 截断读不到,不清
+                self.A[key][slots, :rank] = ga
+                self.B[key][slots, :, :rank] = gb
+
+    def _ensure_stage(self, key, rank, h, in_dim, out_dim, pinned):
+        """(key, rank) 的 pinned 暂存,容量不够就翻倍重分配(总 pinned ≈ 紧凑字节量)."""
+        ent = self._stage.get((key, rank))
+        if ent is None or ent[2] < h:
+            cap = h if ent is None else max(h, ent[2] * 2)
+            ent = (
+                torch.empty(cap, rank, in_dim, dtype=self.dtype, pin_memory=pinned),
+                torch.empty(cap, out_dim, rank, dtype=self.dtype, pin_memory=pinned),
+                cap,
             )
-            # * [change_size, out, r]
-            packed_b = torch.zeros(
-                len(pairs), out_dim, self.max_lora_rank, dtype=self.dtype
+            self._stage[(key, rank)] = ent
+        return ent[0], ent[1]
+
+    def _zero_src(self, key, rank, in_dim, out_dim):
+        """缺 module 的零源(按 (key, rank) 缓存),cat 时占位成全零权重."""
+        z = self._zeros.get((key, rank))
+        if z is None:
+            z = (
+                torch.zeros(rank, in_dim, dtype=self.dtype),
+                torch.zeros(out_dim, rank, dtype=self.dtype),
             )
-            for i, (_, weights) in enumerate(pairs):
-                # * 想要换入的所有的weight
-                # * 如果这一层模型权重, 没有在想要换入的weight中就continue
-                if weight_key not in weights.modules:
-                    continue
-                # ! 获取某一个想要换入的a, b
-                a_cpu, b_cpu = weights.modules[weight_key]
-                r = weights.rank
-                packed_a[i, :r] = a_cpu  # dtype 不一致时在此隐式转换
-                packed_b[i, :, :r] = b_cpu
-            # 每个 module 一次大块 H2D + 一次按槽位散布
-            self.A[weight_key][slots] = packed_a.to(self.device, non_blocking=False)
-            self.B[weight_key][slots] = packed_b.to(self.device, non_blocking=False)
-            #   A["q_proj"][slots] = packed_a
-            #   等价于:
-            #   A["q_proj"][5]  = 层0    ← 第0个adapter进槽5
-            #   A["q_proj"][17] = 层1    ← 第1个进槽17
-            #   A["q_proj"][3]  = 层2    ← 第2个进槽3
+            self._zeros[(key, rank)] = z
+        return z
+
+    def wait_load(self) -> None:
+        """计算流等待最近一次异步装载完成(prepare 末尾调,forward 前生效)."""
+        if self._copy_stream is not None:
+            torch.cuda.current_stream().wait_event(self._load_event)
 
     def get(self, module_key: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """取出某个 module 的全部槽位权重."""
@@ -213,6 +258,9 @@ class LoRAMemoryPool:
             self._slot_rank_scaling[slot] = (weights.rank, weights.scaling)
             pairs.append((slot, weights))
         self.buffers.write_many(pairs)
+        # 计算流排在异步搬运之后:本函数返回后,当前流上的 forward/replay
+        # 一定读得到刚写入的槽位
+        self.buffers.wait_load()
 
     def build_batch_info(self, lora_names: List[LoraName]) -> BatchLoRAInfo:
         """按行给出槽位号,按槽位给出 rank / scaling(kernel 用槽位号去查表)."""
