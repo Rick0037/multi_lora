@@ -5,7 +5,7 @@ PEFT 权重 --抽取--> CPU AdapterWeights --装载--> 本模块的 GPU 槽位
 
 from __future__ import annotations
 
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import torch
 
@@ -13,6 +13,46 @@ from multi_lora.batch_info import BatchLoRAInfo
 from multi_lora.eviction import EvictionPolicy
 from multi_lora.registry import LoraName
 from multi_lora.weights import AdapterWeights
+
+# T18:一次往 GPU 暂存里聚合几个 adapter。暂存显存 = chunk * 单 adapter 扁平字节,
+# 4 个 rank64 adapter 约 344MB;再大就该分块,再小则 H2D 发起次数回升。
+_BANK_CHUNK = 4
+
+
+class _RankPlan:
+    """某个 rank 下 adapter 权重的扁平布局:先排所有 A 块,再排所有 B 块。
+
+    同 rank 的所有 adapter 共用这一套偏移,所以每个 adapter 的整块内容可以
+    一次连续 H2D;池里按 key 切视图散回去。
+    """
+
+    """
+    AdapterWeights.modules  (144 个散张量: q.A, q.B, v.A, v.B, ...)
+        │  按 _RankPlan 的偏移,逐段 copy_ 进一块连续 pinned buffer
+        ▼
+    bank = [q.A | k.A | v.A | o.A | ... | q.B | k.B | ...]   ← 一维,长 total
+        存进 self._banks[id(weights)],带强引用防 id 复用
+    """
+
+    def __init__(self, rank: int, keys: List[str], dims: Dict[str, Tuple[int, int]]):
+        self.rank = rank
+        self.keys = keys
+        self.a_off: Dict[str, int] = {}
+        self.b_off: Dict[str, int] = {}
+        self.a_shape: Dict[str, Tuple[int, int]] = {}
+        self.b_shape: Dict[str, Tuple[int, int]] = {}
+        off = 0
+        for key in keys:
+            in_dim, _ = dims[key]
+            self.a_off[key] = off
+            self.a_shape[key] = (rank, in_dim)
+            off += rank * in_dim
+        for key in keys:
+            _, out_dim = dims[key]
+            self.b_off[key] = off
+            self.b_shape[key] = (out_dim, rank)
+            off += out_dim * rank
+        self.total = off
 
 
 class _GpuBuffers:
@@ -42,9 +82,12 @@ class _GpuBuffers:
         # T17 异步装载:专用 copy stream + 完成事件(仅 cuda;CPU 测试走同步)
         self._copy_stream = None
         self._load_event = None
-        # T17b 分组暂存:(key, rank) -> (pinned_a, pinned_b, 容量);缺 module 的零源缓存
-        self._stage: Dict[tuple, tuple] = {}
-        self._zeros: Dict[tuple, tuple] = {}
+        # T18:每个 adapter 一份"整块 pinned bank"(布局见 _RankPlan),换入时整块 H2D
+        self._banks: Dict[int, tuple] = {}
+        self._plans: Dict[int, "_RankPlan"] = {}
+        self._plan_keys: Optional[tuple] = None
+        # T18:GPU 侧聚合暂存 [chunk, total],跨 rank 复用,不随 rank 数叠加
+        self._stage: Optional[torch.Tensor] = None
 
     def ensure(self, weights: AdapterWeights) -> None:
         """第一次见到某个 module 时,按它的形状建 buffer;已存在的跳过."""
@@ -69,16 +112,17 @@ class _GpuBuffers:
             )
 
     def write_many(self, pairs) -> None:
-        """把一批 adapter 装进各自槽位(T17b:按 (module,rank) 分组 + pinned 暂存)。
+        """把一批 adapter 装进各自槽位(T18:整块 pinned bank 一次 H2D)。
 
-        三个版本的教训:
-          v6 逐条 pageable:9216 次同步仪式 ≈ 350ms CPU
-          v8 装箱补零:次数少了但字节翻倍(h2d GPU 118→275ms)
-          v9 pinned 逐条:字节紧凑、GPU 只忙 153ms,但 9216 次 Python 级
-             copy_ 的调度(~70µs/次)≈ 580ms CPU,成了新瓶颈(TPOT 732ms)
-        本版把表达方式改成每 (module, rank) 一组 6 条语句:
-          cat 聚合进 pinned 暂存(紧凑,不补零) → 1 次异步 H2D → 1 次散布
-        torch 调用 ~3.5k,聚合的 CPU memcpy(~1.4GB)与 GPU 搬运流水。
+        版本账(k64swap32,每步 32 个 adapter):
+          v6 逐条 pageable   9216 次同步仪式 ≈ 350ms CPU
+          v8 装箱补零        次数少但字节翻倍(h2d GPU 118→275ms)
+          v9 pinned 逐条     GPU 只忙 153ms,但 9216 次调度 ≈ 580ms CPU
+          v10 按(module,rank)聚合  TPOT 732→428ms,但多一层 CPU→CPU 拷贝
+                             (~1.4GB/步)仍占大头
+        本版首次换入时把整个 adapter 的 A/B 按固定布局拼成一块 pinned bank,
+        之后每次重装就是"32 次整块 H2D + 288*2 次 GPU 内散布":CPU 不再搬运
+        权重字节,只发起拷贝;H2D 全是连续大块。
         pairs = [(槽位号, AdapterWeights), ...],k64swap32 时长度 32。
         """
         if not pairs:
@@ -87,73 +131,118 @@ class _GpuBuffers:
             if self._copy_stream is None:
                 self._copy_stream = torch.cuda.Stream()
                 self._load_event = torch.cuda.Event()
+            # 抢在计算流之前:上一轮 forward/replay 还在读这些槽位时不能覆写
+            self._copy_stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(self._copy_stream):
-                self._load_grouped(pairs, non_blocking=True)
+                self._load_flat(pairs, non_blocking=True)
+            #! 流切换, 切换到加载过程, 但是外部其实还在同步等加载流结束
             self._load_event.record(self._copy_stream)
         else:
-            self._load_grouped(pairs, non_blocking=False)
+            self._load_flat(pairs, non_blocking=False)
 
-    def _load_grouped(self, pairs, non_blocking: bool) -> None:
-        """按 rank 分组:同组内各 adapter 的 (key, A/B) 形状一致,才能 cat 成块."""
+    def _load_flat(self, pairs, non_blocking: bool) -> None:
         by_rank: Dict[int, list] = {}
+        # * <rank, [slot_id, weight]> 同样rank的分一组
         for slot, w in pairs:
             by_rank.setdefault(w.rank, []).append((slot, w))
-        for rank, group in by_rank.items():
-            h = len(group)
-            slots = torch.tensor([s for s, _ in group], device=self.device)
-            for key in self.A:
-                in_dim = self.A[key].shape[2]
-                out_dim = self.B[key].shape[1]
-                pa, pb = self._ensure_stage(
-                    key, rank, h, in_dim, out_dim, pinned=non_blocking
-                )
-                a_list, b_list = [], []
-                for _, w in group:
-                    if key in w.modules:
-                        a_src, b_src = w.modules[key]
-                    else:
-                        # 该 adapter 没此 module:聚合时填零(kernel 只读前 rank 行)
-                        a_src, b_src = self._zero_src(key, rank, in_dim, out_dim)
-                    a_list.append(
-                        a_src if a_src.dtype == self.dtype else a_src.to(self.dtype)
+        """
+        第1轮: (5, 甲)   甲.rank=8  → by_rank[8] 追加 (5, 甲)
+        第2轮: (17, 乙)  乙.rank=8  → by_rank[8] 追加 (17, 乙)
+        第3轮: (3, 丙)   丙.rank=16 → by_rank[16] 追加 (3, 丙)
+        """
+        for rank, group in by_rank.items():  # 32个按rank分4桶(8/16/32/64各8个)
+            plan = self._plan_for(rank)  # 该rank的偏移表
+            stage = self._ensure_stage(plan.total)  # GPU暂存,形如如下, 装不下了继续
+            """
+            stage(rank=8 时)
+            行0 [ ................................ ]  ← 宽 total,正好装一个 adapter 的全部
+            行1 [ ................................ ]
+            行2 [ ................................ ]
+            行3 [ ................................ ]
+            """
+            if non_blocking:
+                # 暂存跨 rank 复用、可能在默认流分配却在本流使用,登记一下
+                # 免得重分配后被分配器提前复用
+                stage.record_stream(torch.cuda.current_stream())
+            # * 分组循环, 每次处理_BANK_CHUNK个
+            for start in range(0, len(group), _BANK_CHUNK):
+                # * range(0, 8, 4)` 就是`[0, 4]` ——从 0 开始，每次加 4。所以这个循环跑两轮。
+                chunk = group[start : start + _BANK_CHUNK]
+                h = len(chunk)
+                for i, (_, w) in enumerate(chunk):
+                    # 整块 pinned 源 → 暂存第 i 行,一次连续异步 H2D
+                    stage[i].copy_(self._bank_for(w, plan), non_blocking=non_blocking)
+                    # * rank = 4 中的某一个权重直接压缩到stage的一行中了
+                slots = torch.tensor([s for s, _ in chunk], device=self.device)
+                #! 某一个chunk 4个adapter对应的 `slots = [5, 17, 3, 40]`
+                # *------------权重分发----------------
+                for key in plan.keys:  # 144 个 module 挨个来, 先看 key="q_proj"
+                    a_off = plan.a_off[key]  #! 在play中寻找 自己矩阵a 对应的offset
+                    a_numel = plan.rank * plan.a_shape[key][1]  # * 实际需要的数组
+                    self.A[key][slots, :rank] = stage[:h, a_off : a_off + a_numel].view(
+                        h, *plan.a_shape[key]
                     )
-                    b_list.append(
-                        b_src if b_src.dtype == self.dtype else b_src.to(self.dtype)
-                    )
-                # stack 把 h 个 [rank, in] 叠成 [h, rank, in](cat 是沿已有
-                # 维度粘接,会给成 [h*rank, in],形状对不上 out 会触发 resize)
-                torch.stack(a_list, 0, out=pa[:h])
-                torch.stack(b_list, 0, out=pb[:h])
-                ga = pa[:h].to(self.device, non_blocking=non_blocking)
-                gb = pb[:h].to(self.device, non_blocking=non_blocking)
-                # 槽位行宽是 max_lora_rank,只散前 rank 行/列;尾部的旧行
-                # kernel 按 rank 截断读不到,不清
-                self.A[key][slots, :rank] = ga
-                self.B[key][slots, :, :rank] = gb
+                    b_off = plan.b_off[key]
+                    b_numel = plan.b_shape[key][0] * rank
+                    self.B[key][slots, :, :rank] = stage[
+                        :h, b_off : b_off + b_numel
+                    ].view(h, *plan.b_shape[key])
 
-    def _ensure_stage(self, key, rank, h, in_dim, out_dim, pinned):
-        """(key, rank) 的 pinned 暂存,容量不够就翻倍重分配(总 pinned ≈ 紧凑字节量)."""
-        ent = self._stage.get((key, rank))
-        if ent is None or ent[2] < h:
-            cap = h if ent is None else max(h, ent[2] * 2)
-            ent = (
-                torch.empty(cap, rank, in_dim, dtype=self.dtype, pin_memory=pinned),
-                torch.empty(cap, out_dim, rank, dtype=self.dtype, pin_memory=pinned),
-                cap,
-            )
-            self._stage[(key, rank)] = ent
-        return ent[0], ent[1]
+    def _plan_for(self, rank: int) -> "_RankPlan":
+        """取该 rank 的扁平布局;module 集合变了就作废旧布局和旧 bank."""
+        keys = tuple(self.A)
+        if keys != self._plan_keys:
+            self._plans.clear()
+            self._banks.clear()
+            self._plan_keys = keys
+        plan = self._plans.get(rank)
+        if plan is None:
+            dims = {k: (self.A[k].shape[2], self.B[k].shape[1]) for k in keys}
+            plan = _RankPlan(rank, list(keys), dims)
+            self._plans[rank] = plan
+        return plan
 
-    def _zero_src(self, key, rank, in_dim, out_dim):
-        """缺 module 的零源(按 (key, rank) 缓存),cat 时占位成全零权重."""
-        z = self._zeros.get((key, rank))
-        if z is None:
-            z = (
-                torch.zeros(rank, in_dim, dtype=self.dtype),
-                torch.zeros(out_dim, rank, dtype=self.dtype),
-            )
-            self._zeros[(key, rank)] = z
-        return z
+    def _bank_for(self, weights: AdapterWeights, plan: "_RankPlan") -> torch.Tensor:
+        """该 adapter 的整块 pinned 源;首次用到时拼一次,之后按 id 复用。
+
+        缺 module 的位置填零(kernel 只按 rank 截断读,与旧零源语义一致)。
+        """
+        ent = self._banks.get(id(weights))
+        if ent is not None and ent[0] is weights and ent[1] == plan.rank:
+            return ent[2]
+        flat = torch.empty(
+            plan.total,
+            dtype=self.dtype,
+            pin_memory=self.device.type == "cuda",
+        )
+        # plan.keys -> ['weight_keys1', 'weight_keys2']
+        for weight_key in plan.keys:
+            mod = weights.modules.get(weight_key)
+            a_off, (a_r, a_in) = plan.a_off[weight_key], plan.a_shape[weight_key]
+            a_numel = a_r * a_in
+            b_off, (b_out, b_r) = plan.b_off[weight_key], plan.b_shape[weight_key]
+            b_numel = b_out * b_r
+            if mod is None:
+                flat[a_off : a_off + a_numel].zero_()
+                flat[b_off : b_off + b_numel].zero_()
+                continue
+            flat[a_off : a_off + a_numel].copy_(mod[0].reshape(-1).to(self.dtype))
+            flat[b_off : b_off + b_numel].copy_(mod[1].reshape(-1).to(self.dtype))
+        # 同时持有 weights 的强引用,防止 id 被复用后指到别的对象
+        self._banks[id(weights)] = (weights, plan.rank, flat)
+        return flat
+
+    def _ensure_stage(self, total: int) -> torch.Tensor:
+        """GPU 聚合暂存,返回 [chunk, total] 的连续视图;跨 rank 复用一块扁平buffer.
+
+        扁平分配是为了让不同 rank 的行宽不同也各自连续:H2D 目标连续才走
+        cudaMemcpyAsync,非连续会退化成搬运 kernel。
+        """
+        need = _BANK_CHUNK * total
+        st = self._stage
+        if st is None or st.numel() < need:
+            self._stage = torch.empty(need, device=self.device, dtype=self.dtype)
+        return self._stage[:need].view(_BANK_CHUNK, total)
 
     def wait_load(self) -> None:
         """计算流等待最近一次异步装载完成(prepare 末尾调,forward 前生效)."""
@@ -234,6 +323,7 @@ class LoRAMemoryPool:
 
         装槽动作按批聚合(T16):先收集本步全部 (slot, weights),最后一次
         write_many —— H2D 次数与 batch 内 adapter 数解耦,恒为 2*module 数。
+        lora_names -> 本次的lora权重合集
         """
         for name in lora_names:
             self.eviction_policy.mark_used(name)
@@ -257,9 +347,10 @@ class LoRAMemoryPool:
             self.buffers.ensure(weights)
             self._slot_rank_scaling[slot] = (weights.rank, weights.scaling)
             pairs.append((slot, weights))
+        # pairs -> [slot, weights<weight_key, struct<rank, scale, A, B>>]
         self.buffers.write_many(pairs)
-        # 计算流排在异步搬运之后:本函数返回后,当前流上的 forward/replay
-        # 一定读得到刚写入的槽位
+        # 计算流排在异步搬运之后:
+        #! 必须等待权重全部都读完
         self.buffers.wait_load()
 
     def build_batch_info(self, lora_names: List[LoraName]) -> BatchLoRAInfo:

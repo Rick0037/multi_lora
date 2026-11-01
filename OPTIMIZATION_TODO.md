@@ -111,8 +111,44 @@
 | T13 | 实验：BLOCK_M/BLOCK_S 16→4/2/1 | kernel | E-1 | 待做 |
 | T14 | 若 T13 有收益 → decode 专用 GEMV | kernel | E-1 | 待做，依赖 T13 |
 | T15 | autotune + `num_stages` | kernel | P1-1 / P1-2 | 待做，主要救 prefill |
-| T16 | **合并 H2D（必做，排在所有优化的最后）**：每步换入的 N 个 adapter 先在 CPU 侧拼成一块连续 pinned 缓冲，1~2 次拷贝传完，再用一次 `index_copy_` 散到各槽位 | 异步 | P2-2 | **必做**：每步 9216 次 H2D 既是换入成本的大头，也是 profiler 主机内存爆掉的原因 |
-| T17 | copy stream + `non_blocking=True` + 双缓冲预取 | 异步 | P2-2 | 待做，与 T5 二选一 |
+| T16 | **合并 H2D（必做，排在所有优化的最后）**：每步换入的 N 个 adapter 先在 CPU 侧拼成一块连续 pinned 缓冲，1~2 次拷贝传完，再用一次 `index_copy_` 散到各槽位 | 异步 | P2-2 | 完成（v8）：补零装箱把字节翻倍，被 T17 取代 |
+| T17 | copy stream + `non_blocking=True` + 双缓冲预取 | 异步 | P2-2 | 完成（v9/v10）：pinned + copy stream；v10 按 (module,rank) 聚合，TPOT 732→428 |
+| T18 | **整块 pinned bank**：每个 adapter 首装时按固定布局拼成一条连续 pinned 缓冲，换入 = 32 次整块 H2D + GPU 内散布 | 异步 | P2-2 | 完成（v11）：TPOT 428→169.8，CPU 433→57.2ms |
+| T19 | **散布融合单 kernel**：把每步 1152 次 `index_put_` 合成 1 次（指针表 + 偏移表进显存） | 异步 | P2-2 | 待做，预估 −20ms（170→150） |
+| T20 | 预取重叠：next-step 权重在 current-step 计算期间搬运 | 异步 | P2-2 | 暂缓，需 +1.4GB 显存，当前 GPU 已贴边 |
+
+---
+
+## 换入优化版本账（k64swap32，graph 窗口，口径见 `traces/04_decode_n64/`）
+
+| 版本 | 手段 | TPOT | CPU | h2d GPU | gap | 单步字节 |
+|---|---|---|---|---|---|---|
+| v6 | 逐条 pageable `copy_` | 861 | ~350 | 118 | ~480 | 1.4GB |
+| v8 | T16 装箱补零合并 | ~713(wall) | — | 275 | — | 2.8GB(补到 max_rank) |
+| v9 | T17 pinned 逐条 + 异步 | 732 | 580 | 153 | — | 1.4GB |
+| v10 | T17b 按 (module,rank) 聚合 + pinned 暂存 | 428 | 433 | 113 | 389 | 1.4GB |
+| **v11** | **T18 整块 pinned bank + GPU 内散布** | **169.8** | **57.2** | **108.9** | **80.9** | 1.4GB |
+
+v11 关键数字（`ladder_table.py traces/04_decode_n64/v11`）：
+
+- `graph` wall 225.55 / GPU busy 144.69 / gap 80.88（35.9%）/ launch 5360 / tok/s 283.7
+- `replay-only` 26.37ms —— 纯计算只占 wall 的 12%，装载路径仍是主体
+- `copy_memset` 108.87ms / 117 次：32 次整块 H2D 传 1.4GB = **12.9GB/s**
+
+**PCIe 已经是硬顶**：`RTX 4090 D`，`pcie.link.gen.current=4`、`width.current=8`
+→ 理论 15.75GB/s，实测 12.9（82%）。继续换 H2D 写法不会更快，只能减字节或藏起来。
+
+**T19 的成本已经实测过**（`/tmp/probe_scatter2.py`，小形状只量固定开销）：
+
+| 表达 | 每次开销 |
+|---|---|
+| `A[slots,:R]=..` + `B[slots,:,:R]=..`（现在） | 19.96 µs |
+| 逐槽位 8 条语句 | 72.74 µs |
+
+144 keys × 8 chunk = 1152 次 × 20µs ≈ **23ms CPU**，正好对上 v11 里 elementwise
+从 3115 增到 4267 的 1152 次增量（GPU 侧只多 4.1ms）。融合后 1152→1，launch/f 5360→约 4208。
+
+**理论下限**：H2D 109 + 计算 26 + 少量开销 ≈ **145ms**，即这一档最多还剩 ~15% 空间。
 
 ---
 
@@ -343,31 +379,35 @@ q/k/v 的 `in_dim` 相同，可以合并 buffer、一次 kernel 算三个投影�
 - 限制：只覆盖 batch=64 一档；换 batch 或换 adapter 组合要重新 capture，
   KV 用 StaticCache 预分配、长度按总步数算，不能扩。
 
-### P2-2 adapter 换入的 H2D 未隐藏
+### P2-2 adapter 换入的 H2D（T16/T17/T18 已完成，剩 T19）
 
-**位置**：`multi_lora/pool.py:65-74`
+**位置**：`multi_lora/pool.py`（`_GpuBuffers.write_many` / `_load_flat` / `_bank_for`）
 
-pageable 内存 + 默认流同步 `copy_`，且在 forward 之前串行执行。
-可改 pinned 内存 + 独立 copy stream +`non_blocking=True` + event 等待，
-并按下一 batch 的 adapter 集合预取（需要双缓冲，避免覆盖 in-flight kernel 正在读的权重）。
+原始形态是 pageable 内存 + 默认流同步 `copy_`，每换入 1 个 adapter = 144 模块 × A/B
+= **288 次独立 `copy_`**，`k64swap32` 每步 32×288 ≈ 9216 次。这既是换入成本的主体，
+也让 profiler 每步产生约 2.5 万条事件（kineto 曾把主机内存打爆）。
 
-**但第一步必须是“合并 H2D”（T16）**
+**当前形态（T18，v11）**：
 
-现在每换入 1 个 adapter = 144 模块 × A/B = **288 次独立 `copy_`**；`k64swap32` 每步
-32×288 ≈ 9216 次。这既是换入成本的主体，也让 profiler 每步产生约 2.5 万条事件，
-50 步后 kineto 在内存里攒到几十 GB（实测把主机内存打爆）。
+1. 首装时把整个 adapter 的 A/B 按 `_RankPlan` 的固定布局拼成**一条连续 pinned 缓冲**（bank），
+   按 `id(weights)` 缓存复用；
+2. 换入 = 每个 adapter **1 次整块异步 H2D** 到 GPU 暂存 `[chunk, total]`（32 次/步）；
+3. 再做 **GPU 内散布**：按 key 从暂存切视图，按槽位号写进 `A[key][slots,:rank]`（1152 次/步）；
+4. 独立 copy stream + `wait_stream` 防止覆写 in-flight kernel 正在读的槽位，末尾 event 让计算流等待。
 
-做法：每步把要换入的 N 个 adapter 权重先在 CPU 侧拼成**一块连续 pinned 缓冲**，
-一次 `copy_` 传到 GPU 的 staging 区，再用**一次 `index_copy_`** 散到各槽位。
-每步拷贝次数从 9216 降到个位数，事件数与 CPU 开销同时消失。
+实测 v6→v11：TPOT 861→169.8，CPU 433→57.2ms。剩下两件事：
 
-**⚠ 本条保留，不要降级。** 现在测不到收益只是**工况没搭好**：`POOL_SLOTS`=64 个 adapter
-全部常驻，稳态每步没有任何权重 H2D（分桶里那 0.034ms 全是元数据小拷贝）。
-真实场景显存不够、adapter 数远超槽位数时，这条是必经路径。
+- **T19**：1152 次散布融合成 1 次（指针表 + 偏移表常驻显存），省 ~20ms，零显存代价
+- **T20**：预取重叠（双缓冲避免覆盖 in-flight 权重），最多省 26ms，但需 +1.4GB 显存
 
-**验证工况已搭好**：`fix_batch_test_each_cost.py` 的 `TIERS` 五档
+**⚠ H2D 已到 PCIe 硬顶**：1.4GB/步 ÷ 108.9ms = 12.9GB/s，链路是 Gen4 x8（理论 15.75）。
+再写花活不会更快，方向只剩“减字节”或“藏起来”。
+
+**验证工况**：`fix_batch_test_each_cost.py` 的 `TIERS` 五档
 （`k1swap1 / k8swap4 / k32swap16 / k64swap32 / k64swap0`），槽位数 = 本档 adapter 数，
 每步按 rank 分组轮转换入 H 个，平均 rank 与不换入时完全一致（`TierRotation`）。
+正确性用例：`tests/test_pool_write_many.py`（CPU，含布局/bank 不变量）与
+`tests/test_pool_write_many_gpu.py`（GPU，含跨 chunk、缺 module、bank 复用）。
 
 ---
 
@@ -476,7 +516,10 @@ B kernel 的 `BLOCK_S=16` 同理。再叠加 P0-2（rank16 时 n 方向 4 块只
 11. **T14**（decode 专用 GEMV）—— 仅当 T13 确有收益
 12. **T15**（autotune + `num_stages`）—— 主要救 prefill；做完同样要重跑 T5
 
-**第四段：异步 H2D（T16、T17）**
+**第四段：异步 H2D（T16–T20）**
 
-13. **T16**（合并 H2D：一块连续 pinned 缓冲 + 一次 `index_copy_` 散到槽位）—— **必做**，排在所有优化的最后
-14. **T17**（copy stream + non_blocking + 双缓冲预取）—— 与 T5 二选一：capture 内不能有自由异步拷贝
+13. **T16**（合并 H2D）—— 已完成：v8 装箱补零，字节翻倍，被 T17 取代
+14. **T17**（pinned + copy stream + non_blocking）—— 已完成：v9 逐条、v10 按 (module,rank) 聚合
+15. **T18**（整块 pinned bank + GPU 内散布）—— 已完成：v11，TPOT 428→169.8
+16. **T19**（散布融合单 kernel）—— 下一步，预估 −20ms
+17. **T20**（预取重叠）—— 暂缓：需 +1.4GB 显存，最多再省 26ms（计算只有 26ms 可叠）

@@ -1,7 +1,7 @@
-"""write_many(T17b 分组装载)的 GPU 正确性测试。
+"""write_many(T18 整块 pinned bank 装载)的 GPU 正确性测试。
 
 多轮换入换出(含驱逐复用槽位)后,逐槽位对比池内前 rank 区与源权重;
-覆盖 h>1(同 rank 多个)、h==1、混合 rank、缺 module 的 adapter。
+覆盖 h>1(同 rank 多个)、h==1、混合 rank、缺 module、跨 _BANK_CHUNK 分批。
 异步 copy stream 路径的正确性靠 wait_load + synchronize 后再比对。
 
     .venv/bin/python multi_lora/tests/test_pool_write_many_gpu.py
@@ -65,33 +65,37 @@ def main():
     torch.manual_seed(0)
 
     pool = LoRAMemoryPool(
-        max_loras_per_batch=4, max_lora_rank=8, device=dev, dtype=torch.bfloat16
+        max_loras_per_batch=8, max_lora_rank=8, device=dev, dtype=torch.bfloat16
     )
     store = {
         "a": make_weights(8, ["m1", "m2"], 1),
-        "b": make_weights(8, ["m1"], 2),       # 同 rank、缺 m2 → h=2 组 + 零源
+        "b": make_weights(8, ["m1"], 2),       # 同 rank、缺 m2 → h>1 组 + 零填充
         "c": make_weights(4, ["m1", "m2"], 3),  # 低 rank 组
         "d": make_weights(4, ["m2"], 4),
         "e": make_weights(8, ["m1", "m2"], 5),
+        "f": make_weights(8, ["m1", "m2"], 6),  # 凑够 5 个同 rank,跨 chunk 边界
+        "g": make_weights(8, ["m2"], 7),
     }
     for w in store.values():
         pool.ensure_buffers(w)
-    pin = {n: AdapterWeights(w.rank, w.scaling,
-                             {k: (a.pin_memory(), b.pin_memory())
-                              for k, (a, b) in w.modules.items()})
-           for n, w in store.items()}
 
     rounds = [
-        {"a", "b", "c", "d"},   # 满批:rank8 h=2, rank4 h=2
-        {"e"},                  # h==1(单 rank 组)
-        {"a", "c", "e"},        # 混合 + 驱逐复用槽位
-        {"b", "d"},             # 再来一轮复用
+        {"a", "b", "c", "d"},          # 满批:rank8 h=2, rank4 h=2
+        {"e"},                         # h==1(单 rank 组)
+        {"a", "c", "e"},               # 混合 + 驱逐复用槽位(bank 命中)
+        {"b", "d"},                    # 再来一轮复用
+        {"a", "b", "e", "f", "g"},     # rank8 h=5 > _BANK_CHUNK,走分批聚合
     ]
+    bank_counts = []
     for i, names in enumerate(rounds):
-        pool.prepare_lora_batch(names, weight_store=pin)
+        pool.prepare_lora_batch(names, weight_store=store)
         torch.cuda.synchronize()   # 等 copy stream 的异步搬运真正落池
-        n = check_resident(pool, pin, i)
-        print(f"round{i} {sorted(names)}: {n} 个槽位核对一致")
+        n = check_resident(pool, store, i)
+        bank_counts.append(len(pool.buffers._banks))
+        print(f"round{i} {sorted(names)}: {n} 个槽位核对一致, bank={bank_counts[-1]}")
+
+    # bank 按 adapter 复用:7 个 adapter 最多 7 块,不会随轮次增长
+    assert bank_counts[-1] <= len(store), f"bank 泄漏: {bank_counts}"
 
     print("test_pool_write_many_gpu: all OK")
     return 0

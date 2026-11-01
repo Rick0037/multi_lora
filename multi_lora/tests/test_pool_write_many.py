@@ -51,6 +51,46 @@ def check_slot(pool, slot, weights):
             ), f"slot{slot} {key} 缺 module 前 rank 区非零(B)"
 
 
+def check_layout(pool):
+    """扁平布局自检:每个 key 的 A/B 段互不重叠、无缝铺满 total。
+
+    偏移算错时 CPU 上也能炸,不必等 GPU 跑出错误数值再回头查。
+    """
+    for rank, plan in pool.buffers._plans.items():
+        spans = []
+        for key in plan.keys:
+            a_numel = rank * plan.a_shape[key][1]
+            spans.append((plan.a_off[key], plan.a_off[key] + a_numel))
+            b_numel = plan.b_shape[key][0] * rank
+            spans.append((plan.b_off[key], plan.b_off[key] + b_numel))
+        spans.sort()
+        pos = 0
+        for lo, hi in spans:
+            assert lo == pos, f"rank{rank} 布局重叠或缺段: {lo} != {pos}"
+            pos = hi
+        assert pos == plan.total, f"rank{rank} 布局总长 {pos} != {plan.total}"
+
+
+def check_bank(pool, weights):
+    """bank 内容 = 源权重按布局排列,且同一 adapter 复用同一块(不重复拼)."""
+    plan = pool.buffers._plans[weights.rank]
+    bank = pool.buffers._bank_for(weights, plan)
+    assert pool.buffers._bank_for(weights, plan) is bank, "bank 未复用"
+    r = weights.rank
+    for key in plan.keys:
+        if key not in weights.modules:
+            continue
+        a, b = weights.modules[key]
+        a_off = plan.a_off[key]
+        a_numel = r * plan.a_shape[key][1]
+        seg_a = bank[a_off : a_off + a_numel].view(r, -1)
+        assert torch.equal(seg_a, a), f"bank {key} A 排列错误"
+        b_off = plan.b_off[key]
+        b_numel = plan.b_shape[key][0] * r
+        seg_b = bank[b_off : b_off + b_numel].view(plan.b_shape[key][0], r)
+        assert torch.equal(seg_b, b), f"bank {key} B 排列错误"
+
+
 def main():
     torch.manual_seed(0)
     pool = LoRAMemoryPool(
@@ -85,6 +125,11 @@ def main():
     assert set(pool.name_to_slot) == {"a", "d"}
     for name, slot in pool.name_to_slot.items():
         check_slot(pool, slot, store[name])
+    # 扁平布局与 bank 内容自检(每个用过的 adapter 都查)
+    check_layout(pool)
+    for w in store.values():
+        if w.rank in pool.buffers._plans:
+            check_bank(pool, w)
     # build_batch_info 的槽位映射与实际驻留一致
     info = pool.build_batch_info(["a", "d"])
     assert info.weight_indices[0] == pool.get_slot_id("a")
