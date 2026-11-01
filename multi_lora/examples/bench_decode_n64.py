@@ -7,9 +7,12 @@
                               换入 H2D 全在 graph 外;gplain 是不录 graph 的对照。
                               加不加 graph 的对比 = graph vs gplain 这两个 trace。
 
+传参数单跑某一段(都自动串 analyze_trace,产物进新 v{n}/):
+  `decode`  只跑 Baseline(DynamicCache) 窗口(~7min)
+  `graph`   只跑 graph/gplain 两窗口(~10min)—— 优化迭代模式,
+            在 V2 基础上改一版跑一次,阶梯表自动追加
 
-    HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-    .venv/bin/python multi_lora/examples/bench_decode_n64.py
+    HF_HOME=... .venv/bin/python multi_lora/examples/bench_decode_n64.py [decode|graph]
 """
 
 import gc
@@ -29,8 +32,10 @@ from multi_lora.examples.fix_batch_test_each_cost import (  # noqa: E402
     BATCH_SIZE,
     PROMPT,
     SEED,
+    WARMUP_ITERS,
     build_rotation,
     print_report,
+    profile_window,
     run_graph_tier,
     run_one_tier,
 )
@@ -87,18 +92,71 @@ def main():
     )
 
     try:
-        # plain 窗口跳过:graph 的对照是 gplain(同 KV 背靠背),plain 与它代码同路径
-        # 只是 KV 尺寸不同,当不了对照;TTFT/TPOT 走 CUDA event,不依赖 plain 窗口
-        row = run_one_tier(
-            mgr, enc, rotation, run_dir, label, WINDOW_STEPS, with_plain=False
-        )
-        graph_rows = run_graph_tier(mgr, enc, rotation, run_dir, label, WINDOW_STEPS)
-        row["graph"] = graph_rows["graph"]
-        row["gplain"] = graph_rows["gplain"]
+        # `decode` 单跑模式:只跑 Baseline(DynamicCache) 窗口 —— 阶梯表第一行。
+        # 1 次 prefill 填 DynamicCache,之后每步真换入 decode;V1/V2 复用已有产物
+        only = sys.argv[1] if len(sys.argv) > 1 else ""
+        if only == "decode":
+            seq = int(enc["input_ids"].shape[1])
+            out = mgr.forward_with_lora(
+                input_ids=enc["input_ids"],
+                attention_mask=enc["attention_mask"],
+                lora_names=rotation.next_names(),
+                seq_lens=[seq] * BATCH_SIZE,
+                use_cache=True,
+            )
+            ids = out.logits[:, -1].argmax(dim=-1, keepdim=True)
+            past = out.past_key_values
+
+            def dyn_decode():
+                return mgr.forward_with_lora(
+                    input_ids=ids,
+                    attention_mask=None,
+                    seq_lens=[1] * BATCH_SIZE,
+                    lora_names=rotation.next_names(),
+                    past_key_values=past,
+                    use_cache=True,
+                )
+
+            for _ in range(WARMUP_ITERS):
+                dyn_decode()
+            profile_window(dyn_decode, f"decode_{label}", run_dir, WINDOW_STEPS)
+            print(f"decode(Baseline) 窗口完成 -> {run_dir}")
+        elif only == "graph":
+            # `graph` 迭代模式:只跑 graph/gplain 两窗口(V2 基础上改优化时用),
+            # 跳过 Baseline 计时;与历史 graph 行对比看优化收益
+            graph_rows = run_graph_tier(
+                mgr, enc, rotation, run_dir, label, WINDOW_STEPS
+            )
+            g, p = graph_rows["graph"], graph_rows["gplain"]
+            print(
+                f"\ngraph TPOT {g['tpot']:.2f} ms "
+                f"(replay-only {g['tpot_replay_only']:.2f} ms) | "
+                f"CPU: graph {g['cpu_ms']:.1f} vs gplain {p['cpu_ms']:.1f} ms"
+            )
+        else:
+            # plain 窗口已删:StaticCache 不录图的 V1 行由 gplain 担任
+            # (与 graph 同 KV 背靠背);decode 窗口(DynamicCache)= 阶梯 Baseline 行
+            row = run_one_tier(
+                mgr, enc, rotation, run_dir, label, WINDOW_STEPS, with_dyn=True
+            )
+            graph_rows = run_graph_tier(
+                mgr, enc, rotation, run_dir, label, WINDOW_STEPS
+            )
+            row["graph"] = graph_rows["graph"]
+            row["gplain"] = graph_rows["gplain"]
     finally:
         del mgr  # 连模型、pool、graph 一起放
         gc.collect()
         torch.cuda.empty_cache()
+
+    if only in ("decode", "graph"):
+        return subprocess.call(
+            [
+                sys.executable,
+                str(_ROOT / "multi_lora" / "examples" / "analyze_trace.py"),
+                str(run_dir),
+            ]
+        )
 
     print_report([row])
     g = row["graph"]

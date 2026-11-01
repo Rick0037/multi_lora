@@ -192,12 +192,13 @@ def profile_window(fn, tag, outdir, steps=TIMED_ITERS):
 
 
 @torch.inference_mode()
-def run_one_tier(mgr, enc, rotation, outdir, label, steps=TIMED_ITERS, with_plain=True):
-    """阶段A 用 CUDA event 测 TTFT 与双口径 TPOT,再开 prefill(/plain) profiler 窗口。
+def run_one_tier(mgr, enc, rotation, outdir, label, steps=TIMED_ITERS, with_dyn=False):
+    """阶段A 用 CUDA event 测 TTFT 与双口径 TPOT,再开 prefill(/decode) profiler 窗口。
     每步 forward 都从 rotation 取新的一组,warmup 也在真换入。
     TPOT = DynamicCache 老口径(对齐历史表1);TPOT_static = StaticCache+采样,
     与 run_graph_tier 完全同口径(同 max_len) → graph 与普通 decode 可直接比。
-    with_plain=False 跳过 plain 窗口(graph 对比场景下 gplain 才是 graph 的对照)。"""
+    with_dyn=True 加开 decode_ 窗口(DynamicCache decode) = 阶梯表的 Baseline 行。
+    StaticCache 不录图的窗口由 run_graph_tier 的 gplain 担任,这里不再重复。"""
     decode_lens = [1] * BATCH_SIZE  # decode 每段 1 token
 
     def prefill():
@@ -258,15 +259,10 @@ def run_one_tier(mgr, enc, rotation, outdir, label, steps=TIMED_ITERS, with_plai
     # B-1: prefill 窗口
     res = {"prefill": profile_window(prefill, f"prefill_{label}", outdir, steps)}
 
-    # B-2: plain 窗口复用 A-2 的 step,rewind 回起点接着走(旧值会被覆盖,不用清)
-    if with_plain:
-        step.rewind()
-
-        def plain_decode():
-            mgr._setup_forward_batch(rotation.next_names(), seq_lens=decode_lens)
-            return step.run(mgr)
-
-        res["plain"] = profile_window(plain_decode, f"plain_{label}", outdir, steps)
+    # B-2: Baseline(DynamicCache decode) 窗口 —— 阶梯表的第一行。
+    # 复用 A-2a 的 decode() 闭包(同一份 DynamicCache,每步真换入)
+    if with_dyn:
+        res["decode"] = profile_window(decode, f"decode_{label}", outdir, steps)
 
     tpot = statistics.fmean(tpots)
     return {
@@ -372,7 +368,7 @@ def print_report(rows):
 
     stages = []
     for r in rows:
-        for stage in ("prefill", "plain", "gplain", "graph"):
+        for stage in ("decode", "prefill", "gplain", "graph"):
             if not r.get(stage):
                 continue
             s = r[stage]
@@ -383,14 +379,14 @@ def print_report(rows):
             )
     print_table(
         "表2 单次 forward 的 CPU/GPU 占比(wait = CPU 干等 GPU 的时间,不计入 CPU;"
-        "plain 是真实 decode,graph 是同一份 decode 录成 graph)",
+        "gplain 是真实 decode 不录图,graph 是同一份 decode 录成 graph)",
         f"{'tier':>11} {'stage':>8} {'CPU(ms)':>9} {'wait(ms)':>9} "
         f"{'GPU(ms)':>9} {'GPU%':>7} {'launch/step':>12}",
         stages,
     )
 
     for r in rows:
-        for stage in ("prefill", "plain", "gplain", "graph"):
+        for stage in ("decode", "prefill", "gplain", "graph"):
             if not r.get(stage):
                 continue
             print(f"\n表3 tier={r['label']} {stage} top-10 kernel")
