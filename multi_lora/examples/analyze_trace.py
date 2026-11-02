@@ -39,8 +39,8 @@ from typing import Dict, List, Optional, Tuple
 BUCKETS = ["base_gemm", "lora_ab_gemm",
            "adapter_index", "adapter_h2d_copy", "other_gpu"]
 
-# GPU kernel 名规则(顺序即优先级)
-RE_LORA = re.compile(r"_sgemm_lora_[ab]_kernel")
+# GPU kernel 名规则(顺序即优先级);T14 后 decode 走 _gemv_lora_*,prefill 仍走 _sgemm_lora_*
+RE_LORA = re.compile(r"_(?:gemv|sgemm)_lora_[ab]_kernel")
 RE_GEMM = re.compile(r"gemm|cutlass|cublas|nvjet|flash|fmha|attention", re.I)
 RE_INDEX = re.compile(
     r"gather|index_select|indexSelect|scatter|index_elementwise"
@@ -113,8 +113,8 @@ def classify(name: str, cat: str, op: Optional[str]) -> str:
 # 五桶太粗(基座 GEMM 一桶就吃掉 70%), 再加一组互斥的细粒度分组, 按顺序取第一个命中.
 # 注: lm_head 从名字上认不出来, 归在 base_gemm 里.
 GROUP_RULES = [
-    ("lora_a", re.compile(r"_sgemm_lora_a_kernel")),
-    ("lora_b", re.compile(r"_sgemm_lora_b_kernel")),
+    ("lora_a", re.compile(r"_(?:gemv|sgemm)_lora_a_kernel")),
+    ("lora_b", re.compile(r"_(?:gemv|sgemm)_lora_b_kernel")),
     ("lora_scatter", re.compile(r"_scatter_stage_kernel")),
     ("attention", re.compile(r"flash|fmha|attention", re.I)),
     ("cat_kv", re.compile(r"CatArrayBatchedCopy|concat", re.I)),
@@ -373,10 +373,11 @@ def main() -> int:
         rows = []
         for (b, name), (us, cnt) in sorted(
                 s.pop("_detail").items(), key=lambda x: -x[1][0])[:12]:
-            rows.append([b, "kernel", name, us, cnt / s["steps"]])
+            # us/cnt 都换算成单步,与 CSV 列名 ms_per_forward / count_per_forward 一致
+            rows.append([b, "kernel", name, us / s["steps"], cnt / s["steps"]])
         for (b, name), (us, cnt) in sorted(
                 s.pop("_op_detail").items(), key=lambda x: -x[1][0])[:12]:
-            rows.append([b, "aten_op", name, us, cnt / s["steps"]])
+            rows.append([b, "aten_op", name, us / s["steps"], cnt / s["steps"]])
         details[stem] = rows
         # 分组表: 从文件名取阶段与档(k64swap32 = 64 个 adapter、每步换 32 个),
         # 认不出来的归 stage=stem。第二元统一用 str,避免排序时 str/int 混比

@@ -115,6 +115,74 @@ def _sgemm_lora_a_kernel(
     tl.store(output_ptr, partial_sum, mask=output_mask)
 
 
+@triton.jit
+def _gemv_lora_a_kernel(
+    x,
+    weights,
+    output,
+    N,
+    K,
+    stack_num,
+    x_stride_0,
+    x_stride_1,
+    w_stride_0,
+    w_stride_1,
+    w_stride_2,
+    output_stride_0,
+    output_stride_1,
+    seg_indptr,
+    weight_indices,
+    lora_ranks,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    """decode 专用 GEMV 路径:每段恰好 1 行,不做 S 维分块.
+
+    out[n] = sum_k x[k] * w[n, k],用 tl.sum 归约替代 tl.dot ——
+    GEMM 路径 BLOCK_S=16 的 MMA tile 在 M=1 时 15/16 行空转。
+    """
+
+    batch_id = tl.program_id(axis=1)
+    w_index = tl.load(weight_indices + batch_id)
+    rank = tl.load(lora_ranks + w_index)
+    if rank == 0:
+        return  # 基座 slot;无 LoRA,输出区域保持 0
+
+    pid_n = tl.program_id(axis=0)
+    N = tl.minimum(N, rank * stack_num)
+    # 低 rank 时 n 方向有整块越界(BLOCK_N=16, rank=8 只用得到 1 块):
+    # 直接退出,避免空跑 K 循环 —— 与 BLOCK_N 细分配套,否则 parallelism 提升
+    # 会被大量空 block 抵消
+    if pid_n * BLOCK_N >= N:
+        return
+    n_offset = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    k_offset = tl.arange(0, BLOCK_K)
+    seg_start = tl.load(seg_indptr + batch_id)
+
+    acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+    for k in range(0, tl.cdiv(K, BLOCK_K)):
+        kk = k * BLOCK_K + k_offset
+        x_vec = tl.load(  # 本段的唯一一行 [BLOCK_K]
+            x + seg_start * x_stride_0 + kk * x_stride_1,
+            mask=k_offset < K - k * BLOCK_K,
+            other=0.0,
+        )
+        w_tile = tl.load(  # [BLOCK_N, BLOCK_K] = (rank, in_dim) 行主序
+            weights + w_index * w_stride_0
+            + n_offset[:, None] * w_stride_1 + kk[None, :] * w_stride_2,
+            mask=(n_offset[:, None] < N) & (k_offset[None, :] < K - k * BLOCK_K),
+            other=0.0,
+        )
+        acc += tl.sum(w_tile * x_vec[None, :], axis=1)
+
+    acc = acc.to(x.dtype.element_ty)
+    tl.store(
+        output + seg_start * output_stride_0 + n_offset * output_stride_1,
+        acc,
+        mask=n_offset < N,
+    )
+
+
 def sgemm_lora_a_fwd(
     x: torch.Tensor,
     weights: torch.Tensor,  # * -> [OC, IC] 因为是linear出来的
@@ -152,6 +220,35 @@ def sgemm_lora_a_fwd(
     )
 
     output = output[:M, :N]  # 常驻缓冲可能比本次大, 取本次的行/列
+
+    # T13/T14 dispatch:纯 decode(每段 1 token)走 GEMV,其余走 GEMM。
+    # max_len 是 CPU 侧 int,分支稳定 → CUDA Graph capture 时选定,replay 不变。
+    if kernel_input_metadata.max_len == 1:
+        # BLOCK_N=16:N 只有 max_lora_rank(64),按 64 切只有一个 block,
+        # 每次 launch 仅 bs 个 program,128 个 SM 用不满。切 4 块 → 4*bs 个,
+        # 低 rank 的越界块靠 kernel 内早退跳过。
+        _gemv_lora_a_kernel[(triton.cdiv(N, 16), kernel_input_metadata.bs)](
+            x,
+            weights,
+            output,
+            N,
+            K,
+            stack_num,
+            x.stride(0),
+            x.stride(1),
+            weights.stride(0),
+            weights.stride(1),
+            weights.stride(2),
+            output.stride(0),
+            output.stride(1),
+            kernel_input_metadata.seg_indptr,
+            kernel_input_metadata.weight_indices,
+            kernel_input_metadata.lora_ranks,
+            BLOCK_N=16,
+            BLOCK_K=256,
+        )
+        return output
+
     _sgemm_lora_a_kernel[grid](
         x,
         weights,

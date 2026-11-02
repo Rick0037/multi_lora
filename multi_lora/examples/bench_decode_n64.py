@@ -11,8 +11,10 @@
   `decode`  只跑 Baseline(DynamicCache) 窗口(~7min)
   `graph`   只跑 graph/gplain 两窗口(~10min)—— 优化迭代模式,
             在 V2 基础上改一版跑一次,阶梯表自动追加
+  第二个参数 = 每步换入数(默认 32):`graph 0` 跑 k64swap0 对照档,
+            `graph 32`(或不传)= k64swap32;两档各跑一次,产物进各自 v{n}/
 
-    HF_HOME=... .venv/bin/python multi_lora/examples/bench_decode_n64.py [decode|graph]
+    HF_HOME=... .venv/bin/python multi_lora/examples/bench_decode_n64.py [decode|graph] [swap]
 """
 
 import gc
@@ -49,7 +51,6 @@ from multi_lora.manager import MultiLoRAManager  # noqa: E402
 
 OUT_ROOT = _ROOT / "traces" / "04_decode_n64"
 NUM_ADAPTERS = 64
-SWAP = 32  # 每步换入=换出个数;0 = 不换入对照
 WINDOW_STEPS = 15  # 高 swap 档必须 ~15,50 步的 kineto 事件会顶爆 62 GiB cgroup
 # prefill 窗口先跑,吃掉进程首个 profiler 窗口的初始化开销(decode 墙钟 159→114ms)
 
@@ -78,9 +79,13 @@ def main():
     enc = load_tokenizer(BASE)([PROMPT] * BATCH_SIZE, padding=True, return_tensors="pt")
     enc = {k: v.to(device) for k, v in enc.items()}
 
-    # 只注册 rotation 会用到的(SWAP=0 → 64 个,SWAP=32 → 96 个)
-    label = f"k{NUM_ADAPTERS}swap{SWAP}"
-    rotation = build_rotation(NUM_ADAPTERS, SWAP)
+    # 档位开关:第二个参数 = 每步换入数(默认 32;0 = 不换入对照档)
+    only = sys.argv[1] if len(sys.argv) > 1 else ""
+    swap = int(sys.argv[2]) if len(sys.argv) > 2 else 32
+
+    # 只注册 rotation 会用到的(swap=0 → 64 个,swap=32 → 96 个)
+    label = f"k{NUM_ADAPTERS}swap{swap}"
+    rotation = build_rotation(NUM_ADAPTERS, swap)
     used = {n: ADAPTERS[n] for n in rotation.used_names()}
     mgr = MultiLoRAManager.from_pretrained(
         load_causal_lm(BASE, device=device, dtype=dtype),
@@ -94,7 +99,6 @@ def main():
     try:
         # `decode` 单跑模式:只跑 Baseline(DynamicCache) 窗口 —— 阶梯表第一行。
         # 1 次 prefill 填 DynamicCache,之后每步真换入 decode;V1/V2 复用已有产物
-        only = sys.argv[1] if len(sys.argv) > 1 else ""
         if only == "decode":
             seq = int(enc["input_ids"].shape[1])
             out = mgr.forward_with_lora(

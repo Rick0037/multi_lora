@@ -90,6 +90,69 @@ def _sgemm_lora_b_kernel(
     tl.store(output_ptr, partial_sum, mask=output_mask)
 
 
+@triton.jit
+def _gemv_lora_b_kernel(
+    x,
+    weights,
+    output,
+    N,
+    K,
+    x_stride_0,
+    x_stride_1,
+    w_stride_0,
+    w_stride_1,
+    w_stride_2,
+    output_stride_0,
+    output_stride_1,
+    seg_indptr,
+    weight_indices,
+    lora_ranks,
+    scalings,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    """decode 专用 GEMV 路径:mid 行向量 @ B^T * scaling,fused 累加到 output.
+
+    K = rank ≤ 64,一轮归约;out 维按 BLOCK_N 分块。
+    """
+
+    batch_id = tl.program_id(axis=1)
+    w_index = tl.load(weight_indices + batch_id)
+    rank = tl.load(lora_ranks + w_index)
+    if rank == 0:
+        return
+
+    pid_n = tl.program_id(axis=0)
+    scaling = tl.load(scalings + w_index)
+    K = tl.minimum(K, rank)
+    n_offset = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    k_offset = tl.arange(0, BLOCK_K)
+    seg_start = tl.load(seg_indptr + batch_id)
+
+    acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+    for k in range(0, tl.cdiv(K, BLOCK_K)):
+        kk = k * BLOCK_K + k_offset
+        x_vec = tl.load(  # mid 的唯一一行 [BLOCK_K] = [rank]
+            x + seg_start * x_stride_0 + kk * x_stride_1,
+            mask=k_offset < K - k * BLOCK_K,
+            other=0.0,
+        )
+        w_tile = tl.load(  # [BLOCK_N, BLOCK_K] = (out_dim, rank) 行主序
+            weights + w_index * w_stride_0
+            + n_offset[:, None] * w_stride_1 + kk[None, :] * w_stride_2,
+            mask=(n_offset[:, None] < N) & (k_offset[None, :] < K - k * BLOCK_K),
+            other=0.0,
+        )
+        acc += tl.sum(w_tile * x_vec[None, :], axis=1)
+
+    # scaling * delta + 已有基座输出 → fused add
+    acc *= scaling
+    acc = acc.to(x.dtype.element_ty)
+    out_ptr = output + seg_start * output_stride_0 + n_offset * output_stride_1
+    acc += tl.load(out_ptr, mask=n_offset < N)
+    tl.store(out_ptr, acc, mask=n_offset < N)
+
+
 def sgemm_lora_b_fwd(
     x: torch.Tensor,
     weights: torch.Tensor,
@@ -123,6 +186,31 @@ def sgemm_lora_b_fwd(
         output = torch.zeros((S, N), device=x.device, dtype=x.dtype)
     else:
         output = base_output
+
+    # T13/T14 dispatch:纯 decode(每段 1 token)走 GEMV,其余走 GEMM。
+    # 与 A 阶段同判据(max_len 是 CPU 侧 int),graph capture 时选定。
+    if kernel_input_metadata.max_len == 1:
+        _gemv_lora_b_kernel[(triton.cdiv(N, 256), kernel_input_metadata.bs)](
+            x,
+            weights,
+            output,
+            N,
+            R,
+            x.stride(0),
+            x.stride(1),
+            weights.stride(0),
+            weights.stride(1),
+            weights.stride(2),
+            output.stride(0),
+            output.stride(1),
+            kernel_input_metadata.seg_indptr,
+            kernel_input_metadata.weight_indices,
+            kernel_input_metadata.lora_ranks,
+            kernel_input_metadata.scalings,
+            BLOCK_N=256,
+            BLOCK_K=64,
+        )
+        return output
 
     _sgemm_lora_b_kernel[grid](
         x,

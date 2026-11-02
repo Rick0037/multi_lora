@@ -105,11 +105,11 @@
 | T7 | LoRA stacked + 基座 QKV/gate-up 合并 | launch | P1-4 | 待做，减少 base_gemm 的 433 次 launch |
 | T8 | 相同 adapter 请求合组 | launch | E-2 | 待做 |
 | T9 | 搭换入工况(`POOL_SLOTS` 调小)+ 复测 T3 | 工况 | P2-2 前置 | 待做 |
-| T10 | A kernel n 方向早退 | kernel | P0-2 | 待做，**现在 busy≈wall，降 busy 就是降延迟** |
+| T10 | A kernel n 方向早退 | kernel | P0-2 | 完成（GEMV 路径）：`if pid_n*BLOCK_N >= N: return`；GEMM 路径未加 |
 | T11 | A/B segment 越界早退 | kernel | P0-4 | 待做，同上 |
 | T12 | B store 补 `n_offset < N` mask | kernel | P0-1 | 待做，正确性 |
-| T13 | 实验：BLOCK_M/BLOCK_S 16→4/2/1 | kernel | E-1 | 待做 |
-| T14 | 若 T13 有收益 → decode 专用 GEMV | kernel | E-1 | 待做，依赖 T13 |
+| T13 | 实验：BLOCK_M/BLOCK_S 16→4/2/1 | kernel | E-1 | 被合并进 T14(dispatch 直接选 GEMV/GEMM,不再单独调 BLOCK) |
+| T14 | 若 T13 有收益 → decode 专用 GEMV | kernel | E-1 | 代码完成待实测：`max_len==1` 走 `_gemv_lora_[ab]_kernel`（tl.sum 归约，无 MMA 空转），否则原 GEMM；graph capture 时分支固定 |
 | T15 | autotune + `num_stages` | kernel | P1-1 / P1-2 | 待做，主要救 prefill |
 | T16 | **合并 H2D（必做，排在所有优化的最后）**：每步换入的 N 个 adapter 先在 CPU 侧拼成一块连续 pinned 缓冲，1~2 次拷贝传完，再用一次 `index_copy_` 散到各槽位 | 异步 | P2-2 | 完成（v8）：补零装箱把字节翻倍，被 T17 取代 |
 | T17 | copy stream + `non_blocking=True` + 双缓冲预取 | 异步 | P2-2 | 完成（v9/v10）：pinned + copy stream；v10 按 (module,rank) 聚合，TPOT 732→428 |
