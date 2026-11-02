@@ -16,52 +16,80 @@ import triton.language as tl
 
 @triton.jit
 def _rmsnorm_kernel(
-    X,           # [rows, n_cols] 连续
+    X,           # [rows, n_cols],行地址 = b * x_stride_outer + i * x_stride_inner
     W,           # [n_cols] 权重(任意浮点 dtype)
-    Y,           # [rows, n_cols] 输出,通常与 X 同地址(in-place 友好)
-    stride,      # 行步长(= n_cols)
+    Y,           # [rows, n_cols] 输出,连续
+    x_stride_outer,
+    x_stride_inner,
+    inner,       # 每个 outer 块里有多少行
+    y_stride,
     n_cols,
     eps,
     BLOCK: tl.constexpr,
 ):
-    row = tl.program_id(0)
+    pid = tl.program_id(0)
+    b = pid // inner
+    i = pid % inner
+    x_off = b * x_stride_outer + i * x_stride_inner
+
     cols = tl.arange(0, BLOCK)
     mask = cols < n_cols
 
-    x = tl.load(X + row * stride + cols, mask=mask, other=0.0).to(tl.float32)
+    x = tl.load(X + x_off + cols, mask=mask, other=0.0).to(tl.float32)
     # 均值只除 n_cols,不用 mask 修正:越界项已被 other=0 置零
     var = tl.sum(x * x, axis=0) / n_cols
     rstd = tl.rsqrt(var + eps)
 
     w = tl.load(W + cols, mask=mask, other=0.0).to(tl.float32)
     y = x * rstd * w
-    tl.store(Y + row * stride + cols, y.to(Y.dtype.element_ty), mask=mask)
+    tl.store(Y + pid * y_stride + cols, y.to(Y.dtype.element_ty), mask=mask)
 
 
 def rmsnorm_fwd(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
-    """x: [..., H] → 归一化后的同形状张量(新分配,不改入参)."""
+    """x: [..., H] → 归一化后的同形状张量(新分配,不改入参).
+
+    行地址拆成 outer/inner 两级: QKV 融合后 decode 的 q/k 是 [B,1,6144] 的列切片,
+    每个 batch 内连续、batch 之间跳 2048,单一 stride 表达不了; 两级 stride 可直接读。
+    块内还有多级非均匀 stride(prefill 的 [B,S,64,128])或 1D 输入时退回 contiguous。
+    输出按连续布局分配。
+    """
     hidden = x.shape[-1]
     rows = x.numel() // hidden
-    out = torch.empty_like(x)
-
-    if x.dim() > 2:
-        x2 = x.reshape(rows, hidden)
-        y2 = out.reshape(rows, hidden)
+    src = x
+    if x.is_contiguous():
+        outer, inner = 1, rows
+        x_stride_outer, x_stride_inner = 0, hidden
+    elif x.dim() >= 2 and x[0].is_contiguous():
+        # 每个 batch 块内稠密行主序、块间等距(decode 时的 QKV 切片: [B,1,64,128])。
+        # 块稠密 ⟹ 块内行距恒为 hidden(与 stride(-2) 相等,除非该维 size=1,
+        # 那时 stride 无约束,所以直接用 hidden 才是可证明正确的)。
+        outer = x.shape[0]
+        inner = rows // outer
+        x_stride_outer = x.stride(0)
+        x_stride_inner = hidden
     else:
-        x2, y2 = x, out
+        # 块内还有多级非均匀 stride(prefill 的 [B,S,64,128]),二级表达不了
+        src = x.contiguous()
+        outer, inner = 1, rows
+        x_stride_outer, x_stride_inner = 0, hidden
+
+    out = torch.empty((rows, hidden), dtype=x.dtype, device=x.device)
 
     block = triton.next_power_of_2(hidden)
     _rmsnorm_kernel[(rows,)](
-        x2,
+        src,
         weight,
-        y2,
+        out,
+        x_stride_outer,
+        x_stride_inner,
+        inner,
         hidden,
         hidden,
         eps,
         BLOCK=block,
         num_warps=8 if block >= 2048 else 4,
     )
-    return out
+    return out.reshape(x.shape)
 
 
 def fuse_rmsnorm(model) -> int:

@@ -49,6 +49,29 @@ def test_matches_reference(hidden):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="需要 CUDA 编译 Triton kernel")
+@pytest.mark.parametrize("batch,seq", [(64, 1), (64, 7)])   # decode / prefill
+def test_non_contiguous_input(batch, seq):
+    """QKV 融合后的 q/k 切片(单 stride 表达不了)也必须算对."""
+    torch.manual_seed(0)
+    dev = torch.device("cuda")
+    hidden = 128
+    ref = RefRMSNorm(hidden).to(dev, torch.bfloat16)
+    want = ref.forward
+
+    # 真实布局: qkv [B,S,6144] 的 q 段 [.., :4096] -> [B,S,32,128]
+    qkv = torch.randn(batch, seq, 6144, device=dev, dtype=torch.bfloat16)
+    sliced = qkv[..., :4096].view(batch, seq, 32, 128)
+    assert not sliced.is_contiguous()
+    # 单 stride 展平会拷贝(batch 之间跳 2048),所以 kernel 必须自己寻址
+    assert sliced.reshape(-1, hidden).data_ptr() != sliced.data_ptr()
+
+    got = rmsnorm_fwd(sliced, ref.weight, 1e-6)
+    expect = want(sliced.contiguous())
+    assert got.shape == sliced.shape
+    torch.testing.assert_close(got, expect, rtol=2e-2, atol=2e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="需要 CUDA 编译 Triton kernel")
 def test_fuse_patches_all_and_keeps_numerics():
     torch.manual_seed(0)
     dev = torch.device("cuda")

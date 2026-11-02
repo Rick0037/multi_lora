@@ -152,9 +152,16 @@ class MultiLoRAManager:
         #! 可能在模型包括了mlp 但是后缀是qkv的情况, 出现了true
         print("_has_peft_layers", self._has_peft_layers)
 
-        # 可选:融合 RMSNorm(transformers 拆成 4~5 个 kernel → 1 个)。
-        # 默认关,bench 用 MULTI_LORA_FUSED_NORM=1 打开;只换实例 forward,不动权重。
-        if os.environ.get("MULTI_LORA_FUSED_NORM", "0") == "1":
+        # 可选:把同一 attention 下的 q/k/v 基座 GEMM 合并成一次 mm。
+        # 默认关,bench 用 MULTI_LORA_FUSED_QKV=1 打开;只改 decode(单 token)路径。
+        if os.environ.get("MULTI_LORA_FUSED_QKV", "0") == "1":
+            from multi_lora.layers import fuse_qkv_projections
+
+            print(f"fused QKV: {fuse_qkv_projections(self.lora_wrappers)} 组")
+
+        # 默认开:融合 RMSNorm(transformers 拆成 4~5 个 kernel → 1 个)。
+        # 需要 A/B 对照时 MULTI_LORA_FUSED_NORM=0 关掉;只换实例 forward,不动权重。
+        if os.environ.get("MULTI_LORA_FUSED_NORM", "1") == "1":
             from multi_lora.kernels.rmsnorm import fuse_rmsnorm
 
             print(f"fused RMSNorm: {fuse_rmsnorm(self.model)} 个模块")
