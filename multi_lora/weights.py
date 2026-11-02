@@ -21,6 +21,8 @@ class AdapterWeights:
     scaling: float
     # * 单个的adapter的所有权重
     modules: ModuleWeights
+    # T18:已拼成 bank 并释放了 modules;此后布局变更无法再重建
+    flattened: bool = False
 
 
 def normalize_module_key(module_name: str) -> str:

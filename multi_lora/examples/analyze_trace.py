@@ -272,7 +272,7 @@ def build_derived(data: dict, kept_iv, per_step, steps, limit) -> dict:
 def print_table(summaries: List[Dict]) -> None:
     hdr = (f"{'trace':<22} {'steps':>5} {'wall':>7} " +
            " ".join(f"{b[:9]:>9}" for b in BUCKETS) +
-           f" {'gap':>7} {'gap%':>6} {'launch/f':>8}")
+           f" {'gap':>7} {'gap%':>6} {'launch/f':>8} {'tok/s':>8}")
     print("\n" + hdr)
     print("-" * len(hdr))
     for s in summaries:
@@ -280,8 +280,11 @@ def print_table(summaries: List[Dict]) -> None:
         row += " ".join(f"{s[f'{b}_ms']:>9.3f}" for b in BUCKETS)
         row += f" {s['gap_ms']:>7.3f} {s['gap_pct']:>5.1f}% "
         row += f"{sum(s[f'{b}_launch'] for b in BUCKETS):>8.1f}"
+        row += f" {s['tok_s']:>8.1f}"
         print(row)
-    print("\n单位 ms/forward;gap = 墙钟 - GPU 忙时(即 launch 空档与 CPU 阻塞)")
+    print("\n单位 ms/forward;gap = 墙钟 - GPU 忙时(即 launch 空档与 CPU 阻塞);"
+          "tok/s = batch×1000÷wall(decode 每行每步 1 token;"
+          "prefill 行实际是 行/s,一行含整个 prompt)")
 
 
 def print_group_table(group_rows: Dict) -> None:
@@ -344,6 +347,8 @@ def main() -> int:
                     help="派生 trace 保留前几次 forward(0=全部);数字永远基于全部 step")
     ap.add_argument("--no-derived", action="store_true",
                     help="只出数字, 不写派生 trace")
+    ap.add_argument("--batch-size", type=int, default=64,
+                    help="吞吐列用的 batch 行数(bench 固定 64)")
     args = ap.parse_args()
 
     target = Path(args.target)
@@ -382,6 +387,11 @@ def main() -> int:
         if not args.no_derived:
             dump_trace(derived, p.parent / f"{stem}.bucketed.json.gz")
             print(f"  derived -> {stem}.bucketed.json.gz")
+
+    # 吞吐列:tok/s = batch 行 × 1000 ÷ 每 forward 墙钟(wall 含 profiler 开销,
+    # 绝对值偏低,行间对比用;口径与 ladder_table 一致)
+    for s in summaries:
+        s["tok_s"] = args.batch_size * 1000.0 / s["wall_ms"]
 
     print_table(summaries)
     print_group_table(group_rows)

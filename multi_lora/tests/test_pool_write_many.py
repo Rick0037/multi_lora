@@ -71,16 +71,20 @@ def check_layout(pool):
         assert pos == plan.total, f"rank{rank} 布局总长 {pos} != {plan.total}"
 
 
-def check_bank(pool, weights):
-    """bank 内容 = 源权重按布局排列,且同一 adapter 复用同一块(不重复拼)."""
-    plan = pool.buffers._plans[weights.rank]
-    bank = pool.buffers._bank_for(weights, plan)
-    assert pool.buffers._bank_for(weights, plan) is bank, "bank 未复用"
-    r = weights.rank
+def check_bank(pool, live, ref):
+    """bank 内容 = 源权重按布局排列,且同一 adapter 复用同一块(不重复拼)。
+
+    live 是池子持有的对象(可能已释放散张量,只能用来命中缓存);
+    ref 是同样数据的独立副本,提供校验用的源张量。
+    """
+    plan = pool.buffers._plans[live.rank]
+    bank = pool.buffers._bank_for(live, plan)
+    assert pool.buffers._bank_for(live, plan) is bank, "bank 未复用"
+    r = ref.rank
     for key in plan.keys:
-        if key not in weights.modules:
+        if key not in ref.modules:
             continue
-        a, b = weights.modules[key]
+        a, b = ref.modules[key]
         a_off = plan.a_off[key]
         a_numel = r * plan.a_shape[key][1]
         seg_a = bank[a_off : a_off + a_numel].view(r, -1)
@@ -131,12 +135,16 @@ def main():
         device=torch.device("cpu"),
         dtype=torch.float32,
     )
-    store = {
-        "a": make_weights(8, ["m1", "m2"], seed=1),  # 满 rank、全 module
-        "b": make_weights(4, ["m1"], seed=2),  # 低 rank、缺 m2
-        "c": make_weights(8, ["m1", "m2"], seed=3),
-        "d": make_weights(2, ["m2"], seed=4),  # 缺 m1
+    # (rank, modules, seed)。store 会被释放 T18 的散张量,ref 是同样数据但独立的
+    # 副本(同 seed 重建),用来在释放之后校验池内容。
+    specs = {
+        "a": (8, ["m1", "m2"], 1),  # 满 rank、全 module
+        "b": (4, ["m1"], 2),  # 低 rank、缺 m2
+        "c": (8, ["m1", "m2"], 3),
+        "d": (2, ["m2"], 4),  # 缺 m1
     }
+    store = {n: make_weights(r, k, seed=s) for n, (r, k, s) in specs.items()}
+    ref = {n: make_weights(r, k, seed=s) for n, (r, k, s) in specs.items()}
     for w in store.values():
         pool.ensure_buffers(w)
 
@@ -144,29 +152,50 @@ def main():
     pool.prepare_lora_batch({"a", "b"}, weight_store=store)
     assert set(pool.name_to_slot) == {"a", "b"}
     for name, slot in pool.name_to_slot.items():
-        check_slot(pool, slot, store[name])
+        check_slot(pool, slot, ref[name])
+    # T18:装过一次的 adapter 散张量已被释放(只留 bank 一份)
+    for name in ("a", "b"):
+        assert store[name].flattened and store[name].modules == {}, \
+            f"{name} 的散张量没有释放"
 
     # 2) 换出一批:c/d 进,a/b 被驱逐
     pool.prepare_lora_batch({"c", "d"}, weight_store=store)
     assert set(pool.name_to_slot) == {"c", "d"}
     for name, slot in pool.name_to_slot.items():
-        check_slot(pool, slot, store[name])
+        check_slot(pool, slot, ref[name])
 
     # 3) 混合批:a 重新进(触发驱逐),d 已驻留不重装
+    #    a 已在第 1 步释放过散张量,这里必须命中 bank 缓存、不能被要求重建
     pool.prepare_lora_batch({"a", "d"}, weight_store=store)
     assert set(pool.name_to_slot) == {"a", "d"}
     for name, slot in pool.name_to_slot.items():
-        check_slot(pool, slot, store[name])
+        check_slot(pool, slot, ref[name])
     # 扁平布局与 bank 内容自检(每个用过的 adapter 都查)
     check_layout(pool)
-    for w in store.values():
-        if w.rank in pool.buffers._plans:
-            check_bank(pool, w)
+    for name in ref:
+        if ref[name].rank in pool.buffers._plans:
+            check_bank(pool, store[name], ref[name])
     check_tables(pool)
     # build_batch_info 的槽位映射与实际驻留一致
     info = pool.build_batch_info(["a", "d"])
     assert info.weight_indices[0] == pool.get_slot_id("a")
     assert info.weight_indices[1] == pool.get_slot_id("d")
+
+    # 4) 关闭释放时散张量应保留(调试/对照用)
+    pool2 = LoRAMemoryPool(
+        max_loras_per_batch=2, max_lora_rank=8,
+        device=torch.device("cpu"), dtype=torch.float32,
+    )
+    pool2.buffers.release_modules = False
+    store2 = {n: make_weights(r, k, seed=s) for n, (r, k, s) in specs.items()}
+    for w in store2.values():
+        pool2.ensure_buffers(w)
+    pool2.prepare_lora_batch({"a", "b"}, weight_store=store2)
+    for name in ("a", "b"):
+        assert not store2[name].flattened and store2[name].modules, \
+            f"{name} 关掉释放后散张量不该被清空"
+    for name, slot in pool2.name_to_slot.items():
+        check_slot(pool2, slot, store2[name])
 
     print("test_pool_write_many: all OK")
 

@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
 固定模型、输入长度与 batch,用 torch.profiler(CPU+CUDA、record_shapes、export_chrome_trace)
-分别跑 adapter 数量 = 1 / 8 / 32 / 64 四档，每档 warmup 10 次、计时 50 次，
-输出 throughput(tokens/s)、TTFT、单次 forward 的 CPU/GPU 时间占比，
+按 TIERS 五档(k1swap1 / k8swap4 / k32swap16 / k64swap32 / k64swap0)各跑四个窗口:
+
+    prefill_   prefill 的 CPU/GPU 占比
+    decode_    DynamicCache 的 decode 窗口
+    graph_     每步换入 + replay(录了 CUDA Graph)
+    gplain_    StaticCache + decode,不录图(对照)
+
+输出 throughput(tokens/s)、TTFT、TPOT(两种口径)、单次 forward 的 CPU/GPU 占比,
 以及 top-10 kernel 耗时表和 kernel launch 次数。
     python multi_lora/examples/fix_batch_test_each_cost.py
 """
@@ -238,9 +244,7 @@ def run_one_tier(mgr, enc, rotation, outdir, label, steps=TIMED_ITERS, with_dyn=
     # 同 mask 宽度,graph 与普通 decode 可直接比)
     torch.cuda.empty_cache()
     seq = int(enc["input_ids"].shape[1])
-    step = DecodeStep.new(
-        mgr, BATCH_SIZE, seq, seq + TIMED_ITERS + WARMUP_ITERS + 8
-    )
+    step = DecodeStep.new(mgr, BATCH_SIZE, seq, seq + TIMED_ITERS + WARMUP_ITERS + 8)
     step.input_ids.copy_(
         step.prefill(
             mgr, enc["input_ids"], enc["attention_mask"], rotation.next_names()
@@ -355,12 +359,14 @@ def print_table(title, header, lines):
 def print_report(rows):
     """三张表:延迟吞吐 / 单次 forward CPU-GPU 占比 / top-10 kernel."""
     print_table(
-        "表1 延迟与吞吐(TPOT=DynamicCache 老口径;TPOT/st=StaticCache+采样,与 graph 同口径)",
+        "表1 延迟与吞吐(TPOT=DynamicCache 老口径;TPOT/st=StaticCache+采样,与 graph 同口径;"
+        "graph=换入+replay)",
         f"{'tier':>11} {'rank_mix':<16} {'TTFT(ms)':>10} "
-        f"{'TPOT(ms)':>10} {'TPOT/st':>9} {'tok/s':>9}",
+        f"{'TPOT(ms)':>10} {'TPOT/st':>9} {'graph(ms)':>10} {'tok/s':>9}",
         [
             f"{r['label']:>11} {r['mix']:<16} {r['ttft']:>10.2f} "
             f"{r['tpot']:>10.2f} {r.get('tpot_static', float('nan')):>9.2f} "
+            f"{r.get('graph', {}).get('tpot', float('nan')):>10.2f} "
             f"{r['tok_s']:>9.1f}"
             for r in rows
         ],
@@ -407,7 +413,10 @@ def load_enc(device, dtype):
 
 
 def run_tier(k: int, swap: int, steps: int) -> dict:
-    """跑一档:加载 → run_one_tier 两窗口 → 回收。只注册 rotation 会用到的 adapter。"""
+    """跑一档:加载 → 四个窗口(prefill/decode/graph/gplain) → 回收.
+
+    只注册 rotation 会用到的 adapter。
+    """
     torch.manual_seed(SEED)
     outdir = TRACE_DIR
     outdir.mkdir(parents=True, exist_ok=True)
@@ -430,7 +439,13 @@ def run_tier(k: int, swap: int, steps: int) -> dict:
     )
     print(f"  {label} pool 建完,注册 {len(used)} 个 adapter")
     try:
-        return run_one_tier(mgr, enc, rotation, outdir, label, steps)
+        # decode 窗口要显式开(with_dyn);graph/gplain 走 run_graph_tier
+        row = run_one_tier(mgr, enc, rotation, outdir, label, steps, with_dyn=True)
+        # decode 窗口的 DynamicCache 还挂在 allocator 缓存里,录图前先还给驱动:
+        # k64 档 capture 峰值本来就贴边,不清的话多几 GB 碎片就容易 mapping 失败
+        torch.cuda.empty_cache()
+        row.update(run_graph_tier(mgr, enc, rotation, outdir, label, steps))
+        return row
     finally:
         release_tier(mgr)
 

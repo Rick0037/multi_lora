@@ -127,6 +127,8 @@ class _GpuBuffers:
         self._banks: Dict[int, tuple] = {}
         self._plans: Dict[int, "_RankPlan"] = {}
         self._plan_keys: Optional[tuple] = None
+        # T18:bank 建好后释放 weight_store 的散张量(权重只留一份,省约 4.2GB 主机内存)
+        self.release_modules = True
         # T18:GPU 侧聚合暂存 [chunk, total],跨 rank 复用,不随 rank 数叠加
         self._stage: Optional[torch.Tensor] = None
 
@@ -259,10 +261,18 @@ class _GpuBuffers:
         """该 adapter 的整块 pinned 源;首次用到时拼一次,之后按 id 复用。
 
         缺 module 的位置填零(kernel 只按 rank 截断读,与旧零源语义一致)。
+        拼好后按 release_modules 释放 weight_store 里的散张量:同一份权重只留
+        bank 一份,省一份主机内存(96 个 adapter 约 4.2GB)。
         """
         ent = self._banks.get(id(weights))
         if ent is not None and ent[0] is weights and ent[1] == plan.rank:
             return ent[2]
+        if weights.flattened:
+            # 释放过的权重拼不回新布局:宁可报错,不能静默写错数据
+            raise RuntimeError(
+                f"adapter(rank{plan.rank}) 的权重已扁平化并释放,"
+                f"module 布局从 {len(plan.keys)} 个变过之后无法重建 bank"
+            )
         flat = torch.empty(
             plan.total,
             dtype=self.dtype,
@@ -283,6 +293,9 @@ class _GpuBuffers:
             flat[b_off : b_off + b_numel].copy_(mod[1].reshape(-1).to(self.dtype))
         # 同时持有 weights 的强引用,防止 id 被复用后指到别的对象
         self._banks[id(weights)] = (weights, plan.rank, flat)
+        if self.release_modules:
+            weights.modules = {}
+            weights.flattened = True
         return flat
 
     def _ensure_stage(self, total: int) -> torch.Tensor:
