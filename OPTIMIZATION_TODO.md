@@ -282,6 +282,7 @@ v6→v12：TPOT **861→142.7（−83%，6.0 倍）**。
 ### 4.2 算子融合（k64swap0，无换入，`traces/04_decode_n64/`）
 
 v13 = 未融合（对照），v14 = `MULTI_LORA_FUSED_NORM=1`（原 v16，最优一次）。
+> 注：该开关现已**默认开**，`=0` 才是关闭。
 
 | 指标 | v13（关） | v14（开） | 变化 |
 |---|---|---|---|
@@ -405,9 +406,9 @@ HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 .venv/bin/python -u multi_lora/examples/bench_decode_n64.py graph 32
 
-# k64swap0（纯计算）+ 融合 RMSNorm
-MULTI_LORA_FUSED_NORM=1 HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 \
-TRANSFORMERS_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+# k64swap0（纯计算；融合 RMSNorm 默认开，对照时加 MULTI_LORA_FUSED_NORM=0）
+HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 .venv/bin/python -u multi_lora/examples/bench_decode_n64.py graph 0
 
 # 阶梯表
@@ -436,7 +437,8 @@ TRANSFORMERS_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `MULTI_LORA_FUSED_NORM=1` | 关 | 启用融合 RMSNorm（T21） |
+| `MULTI_LORA_FUSED_NORM=0` | **开** | 关掉融合 RMSNorm（T21）做 A/B 对照 |
+| `MULTI_LORA_FUSED_QKV=1` | 关 | 合并 q/k/v 基座 GEMM（T7，仅 decode；待实测） |
 | `LORA_SCATTER_IMPL=python` | `kernel` | 散布切回高级索引参考实现（T19） |
 | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | — | bench 必带，否则 k64 档易 OOM |
 

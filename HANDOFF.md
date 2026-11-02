@@ -190,9 +190,9 @@ HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 .venv/bin/python -u multi_lora/examples/bench_decode_n64.py graph 32
 
-# 纯计算 + 融合 norm
-MULTI_LORA_FUSED_NORM=1 HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 \
-TRANSFORMERS_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+# 纯计算（融合 norm 默认开；要对照就加 MULTI_LORA_FUSED_NORM=0）
+HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 .venv/bin/python -u multi_lora/examples/bench_decode_n64.py graph 0
 ```
 
@@ -214,7 +214,8 @@ HF_HOME=/root/autodl-tmp/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `MULTI_LORA_FUSED_NORM=1` | 关 | 启用融合 RMSNorm（T21） |
+| `MULTI_LORA_FUSED_NORM=0` | **开** | 关掉融合 RMSNorm（T21）做 A/B 对照 |
+| `MULTI_LORA_FUSED_QKV=1` | 关 | 合并 q/k/v 基座 GEMM（T7，仅 decode） |
 | `LORA_SCATTER_IMPL=python` | `kernel` | 散布切回高级索引参考实现（T19） |
 | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | — | bench 必带，否则 k64 档易 OOM |
 
