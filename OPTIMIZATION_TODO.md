@@ -3,7 +3,8 @@
 > 只保留**能在代码里定位到**的项。历史数据来自 `multi_lora/deprecated/optimization.md`，
 > 其中提到的 `sgemm_lora_a_opti*.py` / `bench_multilora_workload.py` 已不存在，仅作参考。
 >
-> 最近更新：T19（散布融合）、T21（RMSNorm 融合）验收完成；清理过期状态与结论。
+> 最近更新：记录 T23（GQA `repeat_kv` 评估，收益最大但依赖 transformers 私有判据，暂挂）；
+> 修正 §5.4 对 `other_gpu` 的错误归因。
 
 ---
 
@@ -11,7 +12,7 @@
 
 ```
 已完成 15 项：T1-T6 T9-T10 T13-T14 T16-T19 T21
-剩余   6 项：T7  T8  T11  T12  T15  T22
+剩余   7 项：T7  T8  T11  T12  T15  T22  T23
 暂缓   1 项：T20
 ```
 
@@ -81,7 +82,7 @@ wall 降 66ms（3.3 倍）。**自此 busy ≈ wall，降 busy 就是降延迟**
 | T4 | 复用 A 阶段 `mid` 张量 | Graph 前置 | ✅ | `aten::empty` 295→151/步 | 所有 |
 | T5 | CUDA Graph decode capture | Graph | ✅ | wall 94.37→28.41（−69.9%） | 稳态 decode |
 | T6 | Graph 验收：TPOT 3 次取区间 | Graph | ✅ | 极差 0.01ms，对齐 3/3 | 稳态 decode |
-| T7 | LoRA stacked + 基座 QKV/gate-up 合并 | launch | ⬜ | **graph ≈0 / 非 graph ~2ms（预估）** | 仅非 graph |
+| T7 | 基座 QKV / gate-up 合并 | launch | ⬜ | **gate/up ≈0；qkv 上限 −0.5ms** / 非 graph −2ms | graph 下仅 qkv 有收益 |
 | T8 | 相同 adapter 请求合组 | launch | ⬜ | 取决于 batch 内重复度 | **需 batch > adapter 数** |
 | T9 | 搭换入工况 + 复测 T3 | 工况 | ✅ | TIERS 五档已搭 | — |
 | T10 | A kernel n 方向早退 | kernel | ✅ | 随 T14 一起（GEMV 路径） | decode |
@@ -97,12 +98,13 @@ wall 降 66ms（3.3 倍）。**自此 busy ≈ wall，降 busy 就是降延迟**
 | T20 | 预取重叠 | 异步 | ⏸ | 上限 −26ms（预估） | 换入；**需 +1.4GB 显存** |
 | T21 | RMSNorm 8 kernel → 1 | 算子融合 | ✅ | graph −1.66ms；**非 graph −23ms（−20%）** | 所有 |
 | T22 | add + RMSNorm 融合 | 算子融合 | ⬜ | graph −0.2~0.3ms（预估） | 所有 |
+| T23 | 消除 GQA `repeat_kv`（`enable_gqa`） | 算子/kernel | ⬜ | **−3.0ms（microbench 实测）** | decode；随 KV 长度线性放大 |
 
 ---
 
 ## 3. 剩余项详情
 
-### T22 add + RMSNorm 融合（最值得做的剩余项）
+### T22 add + RMSNorm 融合（不依赖私有实现的首选项）
 
 **位置**：`Qwen3DecoderLayer.forward`（transformers 侧），残差加与下一个 norm 相邻：
 
@@ -120,6 +122,43 @@ TensorRT-LLM / vLLM 都是这个套路。需重写 `Qwen3DecoderLayer.forward`�
 非 graph 下 −72 次 launch ≈ −1.5ms。
 
 **风险**：绑定 transformers 5.x 的内部结构，升级易失效。
+
+### T23 消除 GQA `repeat_kv`（已评估，因依赖私有实现暂挂）
+
+**现象**：v14 的 `other_gpu` 4.93ms 中，`copy_` 占 3.48ms，其中 **72 次（36 层 × k/v）是
+`[64, 8, 4, 79, 128]` 的 GQA 展开**，单次 37µs，合计 **≈2.7ms/步**。
+
+**根因**（transformers 5.20.2，`integrations/sdpa_attention.py`）：该文件已有 GQA 分支，但门槛是
+
+```python
+return attention_mask is None and key.shape[-1] == value.shape[-1] <= 256
+```
+
+decode 必须带 mask（`DecodeStep.attn_mask`，StaticCache 预分配格子里是 0，不 mask 会 attend 到未写入位置），
+所以永远走 `repeat_kv`。
+
+**四种走法实测**（B=64 / H=32 / KVH=8 / S=79 / D=128 / bf16）：
+
+| 走法 | attention | repeat | 每层 | ×36 层 |
+|---|---|---|---|---|
+| repeat + mem_efficient + mask（现状） | 147.6µs | 74µs | 221.6µs | **7.98ms** |
+| `enable_gqa` + mask（仍 mem_efficient） | 138.2µs | 0 | 138.2µs | **4.98ms** |
+| `enable_gqa` + 无 mask（flash kernel） | 31.8µs | 0 | 31.8µs | **1.14ms** |
+
+`enable_gqa` 与 repeat 两条路径输出 `max_abs_diff = 0.0`。
+
+**两条路**：
+- **A（3 行）**：patch `transformers.integrations.sdpa_attention.use_gqa_in_sdpa` 恒返回 True
+  → −3.0ms，busy 24.5→21.5（−12%），tok/s 2424→≈2755。graph 需重新 capture。
+- **C（几十行）**：换 `flash_attn_with_kvcache` + `cache_seqlens`，KV 布局
+  `[B, KVH, L, D]` → `[B, L, KVH, D]`，牵动 `graph_decode.py` 的 capture 路径
+  → 再省 3.84ms，attention 段降到 1.14ms（busy 17.6，−28%）。
+
+**为什么暂不做**：
+1. A 依赖 transformers 的私有函数名，版本升级即失效（T21 同样问题，但那只是替换实例 forward，不用私有判据）；
+2. C 要改 `StaticCache` 布局，风险和改动量都上一个台阶；
+3. 收益被换入稀释：k64swap32 只 −2.2%（108.9ms H2D 不动），只有 k64swap0 才有 −12%。
+   真正值钱的场景是**长上下文**——repeat 量随 KV 长度线性涨，S=2048 时单项就 ~70ms。
 
 ### T15 autotune + `num_stages`（只救 prefill）
 
@@ -151,15 +190,42 @@ decode 段的大量 program 输入全 mask 但仍跑完 K-loop。加 `if pid_s*B
 
 ### T7 QKV / gate-up 合并（评估后不建议）
 
-**结论**：graph 下 ≈0，非 graph 下约 −2ms（72+36 次 launch）。
+**结论**：gate/up 合并 graph 下 ≈0；**qkv 合并上限 −0.5ms**（graph 下的纯 GPU 收益），
+非 graph 再加 −2ms（108 次 launch）。
 
-理由：
-1. **FLOPs 与权重字节都不变**，只是把多个 GEMM 拼成一个；
-2. graph 下 launch 已压成 1 条 `cudaGraphLaunch`，减次数拿不到钱；
-3. gate/up 的 N=9728 本就很宽，tile 效率已不错，合并不会提升；
-4. qkv 略有一点理由（k/v 的 N=1024 偏窄、M=64 时 CTA 不足），但只影响 1.5ms 里的 10~15%，
-   而要重写 `Qwen3Attention.forward`（q_norm/k_norm、`position_embeddings`、
-   `past_key_values.update` 全要照顾），绑定 transformers 版本，风险与收益不成比例。
+**单次口径实测**（v14 gplain，M=64；地板 = 权重字节 ÷ 1.008TB/s）：
+
+| GEMM | 单次权重 | 单次地板 | 单次实测 | 效率 | ×36 层/步 |
+|---|---|---|---|---|---|
+| gate | 49.8MB | 49.4µs | 62.1µs | 80% | 2.24ms |
+| up | 49.8MB | 49.4µs | 62.1µs | 80% | 2.24ms |
+| down | 49.8MB | 49.4µs | 60.5µs | 82% | 2.18ms |
+| o_proj | 21.0MB | 20.8µs | 36.2µs | **57%** | 1.30ms |
+| q_proj | 21.0MB | 20.8µs | 32.8µs | **63%** | 1.18ms |
+| k / v（各） | 5.2MB | 5.2µs | 10.3µs | **50%** | 0.74ms（k+v） |
+| lm_head | 778MB | 772µs | 883.7µs | 87% | 0.88ms |
+
+实测 = 该 `aten::mm` 发出的所有 GPU kernel（含 split-K 的 reduce）之和；效率 = 地板 / 实测。
+
+**分两档**：
+- gate/up/down/lm_head 在 80~87%，已到顶。gate/up 的 N=9728 已有 152 个 CTA（128 SM 饱和），
+  合并成 N=19456 不会提升，**零收益**；
+- q/o/k/v 只有 50~63%，根因是 M=64 时 CTA 不足：k/v 的 N=1024 → 16 CTA，q/o 的 N=4096 → 64 CTA。
+
+**qkv 合并的账**：
+
+```
+现在      q 1.18 + kv 0.74 = 1.92ms
+地板      31.4MB/层 × 36 / 1.008TB/s = 1.12ms
+按 80%    1.40ms                      → 省 ≈0.5ms（−27%）
+```
+
+**为什么仍不建议**：
+1. 0.5ms 要重写 `Qwen3Attention.forward`：`q_norm`/`k_norm` 得按 `[q|k|v]` 分段后作用在 head_dim 上，
+   RoPE 要拆两段正余弦，`past_key_values.update` 要按新 head 布局切 —— 全部绑死 transformers 5.x；
+2. `o_proj` 依赖 attention 输出，吃不到这 0.5ms；
+3. **FLOPs 与权重字节都不变**，收益只来自 CTA 占用率，天花板就是那 0.5ms；
+4. 同样量级的投入，fp8 量化能拿 −4ms 以上、batch 提到 82 能拿 −3.5ms，都不是「拼 GEMM」。
 
 ### T8 相同 adapter 合组（需换工况）
 
@@ -280,10 +346,18 @@ wall 142.58，gap 只剩 3.7ms（2.6%），GPU 已无空转
 每步读取 ≈ 64 slot × avg_rank 30 × in_dim × 36 层 × 4 module ≈ 2.8GB → 1TB/s 下约 2.8ms。
 实测 lora_a+b = 4.15ms，其中 2.8ms 是不可避免的权重读取。
 
-### 5.4 other_gpu 剩下的不是 norm 了
+### 5.4 other_gpu 剩下的不是 norm，是 attention 前处理
 
-v14 的 4.93ms 构成：363 次 `elementwise_kernel`（10.8µs/次，3.93ms，主要是 silu 与残差加）
-+ 476 次 `vectorized_elementwise`（1.2µs/次）。要再压得改 `Qwen3MLP.forward`。
+v14 的 4.93ms 构成：
+
+- `elementwise_kernel` 363 次共 3.93ms，其中 **`aten::copy_` 112 次就占 3.48ms**
+  —— 72 次是 GQA 的 `repeat_kv`（见 T23），其余是 mask 拷贝；
+- `vectorized_elementwise` 476 次 0.57ms（`fill_` mask、silu、add）；
+- `_rmsnorm_kernel` 145 次 0.245ms（T21 已融合）；
+- `CatArrayBatchedCopy` 72 次 0.188ms（KV cache 的 `torch.cat`）。
+
+纯 elementwise 的 silu/mul/add 加起来只有 ~0.5ms，再融合收益 <0.2ms。
+真正的大头是把 GQA 展开和 mask 重建从图里拿掉（T23）。
 
 ---
 
@@ -295,7 +369,7 @@ v14 的 4.93ms 构成：363 次 `elementwise_kernel`（10.8µs/次，3.93ms，�
 | base GEMM 与 LoRA 分 stream overlap | 实测反驳：decode 80% 是 CPU 发不出指令（busy 20.6 vs 墙钟 100），分 stream 只会多付 event 同步 |
 | `torch.compile` | 自定义 triton kernel + 变长 KV → graph break / 反复重编译；消 launch 用 CUDA Graph 更对症 |
 | 手写 A/B kernel 的 tile 调优 | cuBLAS/cutlass 已把 base_gemm 打到访存 roofline 的 67%，手写难超越 |
-| QKV / gate-up 合并（T7） | 见 §3 T7：FLOPs 与字节不变，graph 下 launch 免费 |
+| QKV / gate-up 合并（T7） | 见 §3 T7：gate/up 已饱和；qkv 上限 0.5ms（CTA 占用），要重写 attention 前处理，投入产出不成比例 |
 | 单独调 `BLOCK_M/BLOCK_S`（T13） | 已被 T14 的 GEMV 路径取代 |
 
 > 注：早期把「手写 norm/silu 融合」列入否决，理由是"graph 已消 launch"。
