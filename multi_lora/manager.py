@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import nullcontext
 from typing import Dict, List, Mapping, Optional, Set
 
@@ -150,6 +151,13 @@ class MultiLoRAManager:
         self._has_peft_layers = has_lora_layers(self.inference_model)
         #! 可能在模型包括了mlp 但是后缀是qkv的情况, 出现了true
         print("_has_peft_layers", self._has_peft_layers)
+
+        # 可选:融合 RMSNorm(transformers 拆成 4~5 个 kernel → 1 个)。
+        # 默认关,bench 用 MULTI_LORA_FUSED_NORM=1 打开;只换实例 forward,不动权重。
+        if os.environ.get("MULTI_LORA_FUSED_NORM", "0") == "1":
+            from multi_lora.kernels.rmsnorm import fuse_rmsnorm
+
+            print(f"fused RMSNorm: {fuse_rmsnorm(self.model)} 个模块")
 
     # ---------- 每个 forward step 的准备 ----------
 
