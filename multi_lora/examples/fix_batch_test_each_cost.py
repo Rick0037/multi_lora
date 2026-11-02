@@ -16,6 +16,7 @@
 import ctypes
 import gc
 import json
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -34,6 +35,7 @@ from multi_lora.hf_runner import (  # noqa: E402
     pick_dtype,
 )
 from multi_lora.manager import MultiLoRAManager  # noqa: E402
+from multi_lora.scheduling import TierRotation, build_rotation as _sched_build_rotation  # noqa: E402
 
 # base model 与 make_qkvo_variants.py 生成的 128 个变体(只含 qkvo,rank 按 8/16/32/64 循环)
 BASE = "Qwen/Qwen3-4B-Instruct-2507"
@@ -69,6 +71,10 @@ PROMPT = "user\nList three countries and their capitals.\nassistant\n"
 # 表1 的 TTFT/TPOT 走 CUDA event 50 次,与 steps 无关。
 TIERS = [(1, 1, 15), (8, 4, 15), (32, 16, 15), (64, 32, 15), (64, 0, 15)]
 BATCH_SIZE = 64
+
+# T8 行分组:batch 行按 adapter 连续排布(next_names 产出),
+# manager 把相邻同名行合成一个 segment。k64 档 picks=64 时两种排布相同。
+GROUPED_ROWS = os.environ.get("MULTI_LORA_GROUP_ROWS", "0") == "1"
 WARMUP_ITERS = 10
 TIMED_ITERS = 50
 SEED = 1234
@@ -76,57 +82,15 @@ GRAPH_TPOT_ITERS = 50  # graph 端到端 TPOT 的计时步数,跟 TIMED_ITERS �
 REPLAY_BASE_ITERS = 25  # replay-only 基准 TPOT 步数(不换入,Graph 的纯下限)
 
 
-class TierRotation:
-    """adapter 轮换器:每个 rank 组一个滑动窗口,每步前进 H/4 个,
-    batch 里四种 rank 恒各占 1/4(平均 rank 不变),且每步恰好换入 H 个。"""
-
-    def __init__(self, k: int, swap: int, groups: dict):
-        self.k = k
-        self.swap = swap
-        self.groups = groups
-        self.per = k // 4  # 每个 rank 组驻留几个
-        self.move = swap // 4  # 每个 rank 组每步前进几个
-        self.step = 0
-
-    def next_names(self):
-        """本步 BATCH_SIZE 个名字(每行一个),不同 adapter 恰好 K 个."""
-        start = self.step
-        self.step += 1
-        if self.k == 1:
-            pool = self.groups[32]
-            picks = [pool[start % len(pool)]]
-        else:
-            picks = []
-            for rank in (8, 16, 32, 64):
-                pool = self.groups[rank]
-                base = start * self.move
-                picks += [pool[(base + j) % len(pool)] for j in range(self.per)]
-        return [picks[i % len(picks)] for i in range(BATCH_SIZE)]
-
-    def rank_mix(self) -> str:
-        """batch 的 rank 组成(表1 的 rank_mix 列)."""
-        if self.k == 1:
-            return "r32:1"
-        return " ".join(f"r{r}:{self.per}" for r in (8, 16, 32, 64))
-
-    def used_names(self) -> list:
-        """能轮换到的全部名字;PEFT 注册即常驻显存,只把这些注册进 manager."""
-        if self.k == 1:
-            return list(self.groups[32])
-        out = []
-        for rank in (8, 16, 32, 64):
-            out += self.groups[rank]
-        return out
-
-
 def build_rotation(k: int, swap: int) -> TierRotation:
-    """每组只留窗口会用到的 K/4+H/4 个(K=1 在 r32 组取 1+H 个)."""
-    need = 1 + swap if k == 1 else k // 4 + swap // 4
-    groups = {
-        r: [n for n, v in ADAPTER_RANKS.items() if v == r][:need]
-        for r in (8, 16, 32, 64)
-    }
-    return TierRotation(k, swap, groups)
+    """bench 包装:把本脚本的 adapter 集合 / batch 大小 / 分组开关闭包进去.
+
+    策略本体在 multi_lora/scheduling.py(纯逻辑,无测量依赖)。
+    """
+    return _sched_build_rotation(
+        k, swap, rank_of=ADAPTER_RANKS, batch_size=BATCH_SIZE,
+        grouped=GROUPED_ROWS,
+    )
 
 
 def cuda_ms(fn):

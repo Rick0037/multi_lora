@@ -79,19 +79,22 @@ def main():
     enc = load_tokenizer(BASE)([PROMPT] * BATCH_SIZE, padding=True, return_tensors="pt")
     enc = {k: v.to(device) for k, v in enc.items()}
 
-    # 档位开关:第二个参数 = 每步换入数(默认 32;0 = 不换入对照档)
+    # 档位开关:第一个参数 = 窗口模式(graph/gplain/decode/all);
+    # 第二个 = 每步换入数 H(默认 32;0 = 不换入对照档);
+    # 第三个 = batch 内 adapter 数 K(默认 64)。k8swap4 就是 K=8 H=4。
     only = sys.argv[1] if len(sys.argv) > 1 else ""
     swap = int(sys.argv[2]) if len(sys.argv) > 2 else 32
+    num_adapters = int(sys.argv[3]) if len(sys.argv) > 3 else NUM_ADAPTERS
 
-    # 只注册 rotation 会用到的(swap=0 → 64 个,swap=32 → 96 个)
-    label = f"k{NUM_ADAPTERS}swap{swap}"
-    rotation = build_rotation(NUM_ADAPTERS, swap)
+    # 只注册 rotation 会用到的(swap=0 → K 个,swap=32 → K+32 个)
+    label = f"k{num_adapters}swap{swap}"
+    rotation = build_rotation(num_adapters, swap)
     used = {n: ADAPTERS[n] for n in rotation.used_names()}
     mgr = MultiLoRAManager.from_pretrained(
         load_causal_lm(BASE, device=device, dtype=dtype),
         used,
         # 槽位数 = 本档 adapter 数;rank 上限 = 变体的实际 rank
-        max_loras_per_batch=NUM_ADAPTERS,
+        max_loras_per_batch=num_adapters,
         max_lora_rank=max(ADAPTER_RANKS.values()),
         lora_backend="triton",
     )

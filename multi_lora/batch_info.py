@@ -67,6 +67,36 @@ def segment_lens(bs: int, seq_lens: List[int]) -> Tuple[List[int], List[int]]:
     return lens, indptr
 
 
+def group_rows(names: list, seq_lens: List[int]) -> Tuple[list, List[int]]:
+    """相邻同名行合成一段(RLE);返回 (段名列表, 段长列表).
+
+    decode(seq_lens=[])时每行记 1 个 token;prefill 时同段各行的 token 数相加。
+    名字交错排布时没有相邻重复,输出与输入一一对应,行为与不合并完全一致。
+
+    刻意只合并相邻、不改行序:KV cache / attention 的行对齐不被打乱,
+    CUDA Graph 里每步的组结构稳定(行→adapter 的块状映射不变)。
+    想吃到合并收益,调用方要按 adapter 把行排连续(bench 的
+    MULTI_LORA_GROUP_ROWS=1 就是干这个)。
+    """
+    if not seq_lens:
+        row_lens = [1] * len(names)
+    else:
+        row_lens = [int(v) for v in seq_lens]
+    if len(row_lens) != len(names):
+        raise ValueError(
+            f"seq_lens({len(row_lens)}) 要与 names({len(names)}) 同长")
+
+    group_names: list = []
+    group_lens: List[int] = []
+    for name, n_tok in zip(names, row_lens):
+        if group_names and group_names[-1] == name:
+            group_lens[-1] += n_tok
+        else:
+            group_names.append(name)
+            group_lens.append(n_tok)
+    return group_names, group_lens
+
+
 def fill_column(
     column: torch.Tensor, values: list, pad: float
 ) -> None:

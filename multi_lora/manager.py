@@ -15,6 +15,7 @@ from multi_lora.batch_info import (
     BatchLoRAInfo,
     KernelInputMetaData,
     empty_kernel_input_metadata,
+    group_rows,
     write_kernel_input_metadata,
 )
 from multi_lora.batching import (
@@ -191,16 +192,22 @@ class MultiLoRAManager:
     ) -> KernelInputMetaData:
         """prepare_lora_batch + 把结果写进常驻 GPU 张量并返回.
 
-        seq_lens 是 CPU 上每段的 token 数(如 [13, 13, 22]);decode 传 []。
+        seq_lens 是 CPU 上每行的 token 数(如 [13, 13, 22]);decode 传 []。
+        相邻同名行先合并成一个 segment(T8 分组):metadata 的 bs 从行数变成
+        组数,LoRA kernel 一个 program 覆盖整组行,k8/k1 档 lora 的 M 从 1
+        提到 64/K。名字交错排布时无相邻重复,行为与不合并完全一致;
+        行序不变,KV / CUDA Graph 都不受影响(组结构每步要稳定,否则
+        capture 的 grid 对不上)。
         常驻张量装得下就不新建,地址跨 step 不变(CUDA Graph 依赖这点)。
         """
-        batch_info = self.prepare_lora_batch(lora_names)
+        group_names, group_lens = group_rows(lora_names, seq_lens)
+        batch_info = self.prepare_lora_batch(group_names)
         self._resident_meta = write_kernel_input_metadata(
             self._resident_meta,
             batch_info,
             device=self.pool.device,
             dtype=self.pool.dtype,
-            seq_lens=seq_lens,
+            seq_lens=group_lens,
         )
         return self._resident_meta
 
